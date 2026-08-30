@@ -3,7 +3,6 @@ package mdns
 
 import (
 	"context"
-	"net"
 	"net/netip"
 	"sync"
 	"time"
@@ -91,7 +90,11 @@ func (b *ZeroconfBrowser) browseOnce(ctx context.Context, events chan<- Endpoint
 		wg.Add(1)
 		go func(svc string) {
 			defer wg.Done()
-			if err := zeroconf.Browse(bctx, svc, b.Domain, entries); err != nil && ctx.Err() == nil {
+			// Discovery is IPv4-only: BMC IPv6 advertisements are typically
+			// link-local or ULA addresses that are not reachable from the
+			// cluster, so only IPv4 multicast is watched.
+			err := zeroconf.Browse(bctx, svc, b.Domain, entries, zeroconf.SelectIPTraffic(zeroconf.IPv4))
+			if err != nil && ctx.Err() == nil {
 				b.Log.Error(err, "mDNS browse failed", "service", svc)
 			}
 		}(svc)
@@ -99,8 +102,9 @@ func (b *ZeroconfBrowser) browseOnce(ctx context.Context, events chan<- Endpoint
 	wg.Wait()
 }
 
-// EntryToEndpoint converts a zeroconf entry, preferring IPv4 addresses.
-// It returns false when the entry carries no address.
+// EntryToEndpoint converts a zeroconf entry. Discovery is IPv4-only, so it
+// returns false when the entry carries no IPv4 address (AAAA records can
+// still arrive over the IPv4 socket and are ignored).
 func EntryToEndpoint(entry *zeroconf.ServiceEntry) (Endpoint, bool) {
 	ep := Endpoint{
 		Instance: entry.Instance,
@@ -108,9 +112,9 @@ func EntryToEndpoint(entry *zeroconf.ServiceEntry) (Endpoint, bool) {
 		Hostname: entry.HostName,
 		Port:     entry.Port,
 	}
-	for _, ip := range append(append([]net.IP{}, entry.AddrIPv4...), entry.AddrIPv6...) {
+	for _, ip := range entry.AddrIPv4 {
 		addr, ok := netip.AddrFromSlice(ip)
-		if ok {
+		if ok && addr.Unmap().Is4() {
 			ep.IP = addr.Unmap()
 			return ep, true
 		}

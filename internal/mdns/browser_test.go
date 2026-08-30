@@ -28,16 +28,15 @@ func TestEntryToEndpoint(t *testing.T) {
 		wantIP string
 	}{
 		{
-			name:   "prefers IPv4",
+			name:   "uses IPv4",
 			entry:  entry([]net.IP{net.ParseIP("10.0.80.1")}, []net.IP{net.ParseIP("fe80::1")}),
 			wantOK: true,
 			wantIP: "10.0.80.1",
 		},
 		{
-			name:   "falls back to IPv6",
+			name:   "ignores IPv6-only entries",
 			entry:  entry(nil, []net.IP{net.ParseIP("fe80::1")}),
-			wantOK: true,
-			wantIP: "fe80::1",
+			wantOK: false,
 		},
 		{
 			name:   "no addresses",
