@@ -13,4 +13,8 @@ COPY ${TARGETOS}/${TARGETARCH}/manager /manager
 COPY --from=ca-certs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY LICENSE /usr/share/doc/tinkerbell-bmc-discovery-controller/LICENSE
 
+# Same uid:gid as distroless nonroot; scratch has no /etc/passwd, so the
+# numeric form is required for Kubernetes runAsNonRoot validation.
+USER 65532:65532
+
 ENTRYPOINT ["/manager"]
