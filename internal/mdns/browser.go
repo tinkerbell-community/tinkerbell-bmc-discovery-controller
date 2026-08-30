@@ -3,6 +3,7 @@ package mdns
 
 import (
 	"context"
+	"net"
 	"net/netip"
 	"sync"
 	"time"
@@ -37,6 +38,11 @@ type ZeroconfBrowser struct {
 	Domain       string
 	Interval     time.Duration // time between browse cycles
 	Window       time.Duration // duration of each browse cycle
+	// Interfaces restricts browsing to these named interfaces (e.g. "net1"
+	// for a Multus attachment). Empty means all multicast-capable
+	// interfaces. Names are resolved every cycle, so an interface that
+	// appears after startup is picked up.
+	Interfaces []string
 }
 
 // Run browses until ctx is done. Browse failures are logged, never fatal.
@@ -54,6 +60,21 @@ func (b *ZeroconfBrowser) Run(ctx context.Context, events chan<- Endpoint) error
 func (b *ZeroconfBrowser) browseOnce(ctx context.Context, events chan<- Endpoint) {
 	bctx, cancel := context.WithTimeout(ctx, b.Window)
 	defer cancel()
+
+	// Discovery is IPv4-only: BMC IPv6 advertisements are typically
+	// link-local or ULA addresses that are not reachable from the cluster.
+	opts := []zeroconf.ClientOption{zeroconf.SelectIPTraffic(zeroconf.IPv4)}
+	if len(b.Interfaces) > 0 {
+		ifaces, missing := resolveInterfaces(b.Interfaces)
+		if len(missing) > 0 {
+			b.Log.Info("some mDNS interfaces not found", "missing", missing)
+		}
+		if len(ifaces) == 0 {
+			b.Log.Info("no configured mDNS interface exists yet; skipping browse cycle", "interfaces", b.Interfaces)
+			return
+		}
+		opts = append(opts, zeroconf.SelectIfaces(ifaces))
+	}
 
 	var wg sync.WaitGroup
 	for _, svc := range b.ServiceTypes {
@@ -90,16 +111,28 @@ func (b *ZeroconfBrowser) browseOnce(ctx context.Context, events chan<- Endpoint
 		wg.Add(1)
 		go func(svc string) {
 			defer wg.Done()
-			// Discovery is IPv4-only: BMC IPv6 advertisements are typically
-			// link-local or ULA addresses that are not reachable from the
-			// cluster, so only IPv4 multicast is watched.
-			err := zeroconf.Browse(bctx, svc, b.Domain, entries, zeroconf.SelectIPTraffic(zeroconf.IPv4))
-			if err != nil && ctx.Err() == nil {
+			if err := zeroconf.Browse(bctx, svc, b.Domain, entries, opts...); err != nil && ctx.Err() == nil {
 				b.Log.Error(err, "mDNS browse failed", "service", svc)
 			}
 		}(svc)
 	}
 	wg.Wait()
+}
+
+// resolveInterfaces looks up interfaces by name, returning the ones that
+// exist and the names that do not.
+func resolveInterfaces(names []string) ([]net.Interface, []string) {
+	var ifaces []net.Interface
+	var missing []string
+	for _, name := range names {
+		iface, err := net.InterfaceByName(name)
+		if err != nil {
+			missing = append(missing, name)
+			continue
+		}
+		ifaces = append(ifaces, *iface)
+	}
+	return ifaces, missing
 }
 
 // EntryToEndpoint converts a zeroconf entry. Discovery is IPv4-only, so it

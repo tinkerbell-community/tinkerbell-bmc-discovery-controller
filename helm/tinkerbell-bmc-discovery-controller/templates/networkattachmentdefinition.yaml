@@ -1,0 +1,19 @@
+{{- if and .Values.networking.multus.enabled .Values.networking.multus.create }}
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: {{ .Values.networking.multus.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "bmc-discovery.labels" . | nindent 4 }}
+spec:
+  config: |
+    {
+      "cniVersion": "0.3.1",
+      "name": {{ .Values.networking.multus.name | toJson }},
+      "type": "ipvlan",
+      "master": {{ .Values.networking.multus.master | toJson }},
+      "mode": {{ .Values.networking.multus.mode | toJson }},
+      "ipam": {{ .Values.networking.multus.ipam | toJson }}
+    }
+{{- end }}

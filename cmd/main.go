@@ -26,6 +26,18 @@ import (
 	syncpkg "github.com/tinkerbell-community/tinkerbell-bmc-discovery-controller/internal/sync"
 )
 
+// splitNonEmpty splits a comma-separated list, dropping empty elements so an
+// unset flag yields nil rather than [""].
+func splitNonEmpty(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
 // Build metadata injected by goreleaser via -ldflags.
 var (
 	version = "dev"
@@ -39,6 +51,7 @@ func main() {
 		namespace         string
 		serviceTypes      string
 		mdnsDomain        string
+		mdnsInterfaces    string
 		browseInterval    time.Duration
 		browseWindow      time.Duration
 		resyncInterval    time.Duration
@@ -53,6 +66,7 @@ func main() {
 	flag.StringVar(&namespace, "namespace", "tink", "Namespace for created resources and the credentials secret.")
 	flag.StringVar(&serviceTypes, "service-types", "_redfish._tcp,_obmc_redfish._tcp", "Comma-separated DNS-SD service types to browse.")
 	flag.StringVar(&mdnsDomain, "mdns-domain", "local.", "mDNS browse domain.")
+	flag.StringVar(&mdnsInterfaces, "mdns-interfaces", "", "Comma-separated interface names to browse on (e.g. net1 for a Multus attachment); empty browses all multicast-capable interfaces.")
 	flag.DurationVar(&browseInterval, "browse-interval", 5*time.Minute, "Time between mDNS browse cycles.")
 	flag.DurationVar(&browseWindow, "browse-window", 30*time.Second, "Duration of each mDNS browse cycle.")
 	flag.DurationVar(&resyncInterval, "resync-interval", time.Hour, "Inventory refresh interval for known BMCs.")
@@ -103,6 +117,7 @@ func main() {
 			Domain:       mdnsDomain,
 			Interval:     browseInterval,
 			Window:       browseWindow,
+			Interfaces:   splitNonEmpty(mdnsInterfaces),
 		},
 		Collector: &inventory.BMCLibCollector{
 			Timeout: collectTimeout,

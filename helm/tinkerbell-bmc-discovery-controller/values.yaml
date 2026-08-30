@@ -33,8 +33,30 @@ insecureTLS: true
 
 leaderElection: true
 
-# mDNS needs multicast on the host network.
-hostNetwork: true
+# mDNS needs multicast reachability to the BMC network. Either run on the
+# host network (default), or attach a dedicated interface on the BMC VLAN
+# via Multus ipvlan (networking.multus.enabled) — multus takes precedence
+# and turns host networking off.
+networking:
+  hostNetwork: true
+  multus:
+    enabled: false
+    # NetworkAttachmentDefinition name; created when create is true.
+    name: bmc-discovery-mdns
+    create: true
+    # Node interface the ipvlan rides on (the uplink carrying the BMC VLAN).
+    master: eth0
+    # ipvlan mode: l2 supports multicast receive.
+    mode: l2
+    # Raw CNI IPAM config for the attachment, rendered as JSON. The pod
+    # needs an IPv4 address on the BMC network for mDNS, e.g.:
+    #   {type: dhcp}
+    # or
+    #   {type: host-local, subnet: 10.0.80.0/24, rangeStart: 10.0.80.200, rangeEnd: 10.0.80.220}
+    ipam:
+      type: dhcp
+    # Pod interface name Multus assigns; mDNS browsing binds to it.
+    interface: net1
 
 logLevel: info
 

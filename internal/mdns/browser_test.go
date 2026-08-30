@@ -64,6 +64,22 @@ func TestEntryToEndpoint(t *testing.T) {
 	}
 }
 
+func TestResolveInterfaces(t *testing.T) {
+	// "lo" exists on every Linux host; "does-not-exist-0" never does.
+	ifaces, missing := resolveInterfaces([]string{"lo", "does-not-exist-0"})
+	if len(ifaces) != 1 || ifaces[0].Name != "lo" {
+		t.Errorf("ifaces = %v, want just lo", ifaces)
+	}
+	if len(missing) != 1 || missing[0] != "does-not-exist-0" {
+		t.Errorf("missing = %v, want [does-not-exist-0]", missing)
+	}
+
+	ifaces, missing = resolveInterfaces(nil)
+	if ifaces != nil || missing != nil {
+		t.Errorf("resolveInterfaces(nil) = %v, %v; want nil, nil", ifaces, missing)
+	}
+}
+
 func TestEndpointKey(t *testing.T) {
 	ep := Endpoint{Instance: "X570D4I-2T", Service: "_redfish._tcp"}
 	if got, want := ep.Key(), "_redfish._tcp/X570D4I-2T"; got != want {

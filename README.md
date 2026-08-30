@@ -77,7 +77,8 @@ discovery:
 - The Tinkerbell CRDs (`hardware.tinkerbell.org`, `machines.bmc.tinkerbell.org`)
   installed — they ship with the [tinkerbell helm chart](https://github.com/tinkerbell/tinkerbell).
 - BMCs advertising Redfish over mDNS, reachable from the node the controller
-  runs on. The pod uses `hostNetwork: true` because mDNS needs multicast.
+  runs on. By default the pod uses `hostNetwork: true` because mDNS needs
+  multicast (see below for the Multus alternative).
 - A Secret with the shared BMC credentials (keys `username` and `password`).
 
 ## Install
@@ -91,6 +92,26 @@ helm install bmc-discovery \
   --namespace tink
 ```
 
+### Non-host networking via Multus ipvlan
+
+Instead of host networking, the pod can get a dedicated IPv4 interface on the
+BMC VLAN through [Multus](https://github.com/k8snetworkplumbingwg/multus-cni)
+with the ipvlan CNI. The chart creates the NetworkAttachmentDefinition,
+annotates the pod, and pins mDNS browsing to the attached interface:
+
+```yaml
+networking:
+  multus:
+    enabled: true          # turns hostNetwork off
+    master: eth0           # node uplink carrying the BMC VLAN
+    ipam:
+      type: dhcp           # any CNI IPAM config; the pod needs an IPv4
+                           # address on the BMC network
+```
+
+Discovery itself is IPv4-only (BMC IPv6 advertisements are typically
+link-local or ULA addresses unreachable from the cluster).
+
 ## Configuration
 
 | Flag | Helm value | Default | Purpose |
@@ -98,6 +119,7 @@ helm install bmc-discovery \
 | `--namespace` | release namespace | `tink` | Namespace for created resources |
 | `--service-types` | `discovery.serviceTypes` | `_redfish._tcp,_obmc_redfish._tcp` | DNS-SD types to browse |
 | `--mdns-domain` | `discovery.domain` | `local.` | Browse domain |
+| `--mdns-interfaces` | `networking.multus.interface` (when enabled) | all interfaces | Interfaces to browse on |
 | `--browse-interval` | `discovery.browseInterval` | `5m` | Time between browse cycles |
 | `--browse-window` | `discovery.browseWindow` | `30s` | Duration of each browse |
 | `--resync-interval` | `discovery.resyncInterval` | `1h` | Inventory refresh for known BMCs |

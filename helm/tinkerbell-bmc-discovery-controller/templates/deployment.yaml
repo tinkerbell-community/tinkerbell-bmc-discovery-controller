@@ -14,10 +14,15 @@ spec:
     metadata:
       labels:
         {{- include "bmc-discovery.selectorLabels" . | nindent 8 }}
+      {{- if .Values.networking.multus.enabled }}
+      annotations:
+        k8s.v1.cni.cncf.io/networks: '[{"name": {{ .Values.networking.multus.name | quote }}, "namespace": {{ .Release.Namespace | quote }}, "interface": {{ .Values.networking.multus.interface | quote }}}]'
+      {{- end }}
     spec:
       serviceAccountName: {{ include "bmc-discovery.name" . }}
-      hostNetwork: {{ .Values.hostNetwork }}
-      {{- if .Values.hostNetwork }}
+      {{- $hostNetwork := and .Values.networking.hostNetwork (not .Values.networking.multus.enabled) }}
+      hostNetwork: {{ $hostNetwork }}
+      {{- if $hostNetwork }}
       dnsPolicy: ClusterFirstWithHostNet
       {{- end }}
       securityContext:
@@ -40,6 +45,9 @@ spec:
             - --collect-timeout={{ .Values.discovery.collectTimeout }}
             - --credentials-secret={{ .Values.credentials.name }}
             - --redfish-port={{ .Values.discovery.redfishPort }}
+            {{- if .Values.networking.multus.enabled }}
+            - --mdns-interfaces={{ .Values.networking.multus.interface }}
+            {{- end }}
             - --insecure-tls={{ .Values.insecureTLS }}
             - --leader-elect={{ .Values.leaderElection }}
             - --zap-log-level={{ .Values.logLevel }}
