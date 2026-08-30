@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "bmc-discovery.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "bmc-discovery.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "bmc-discovery.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "bmc-discovery.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "bmc-discovery.name" . }}
+      hostNetwork: {{ .Values.hostNetwork }}
+      {{- if .Values.hostNetwork }}
+      dnsPolicy: ClusterFirstWithHostNet
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: manager
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - --namespace={{ .Release.Namespace }}
+            - --service-types={{ join "," .Values.discovery.serviceTypes }}
+            - --mdns-domain={{ .Values.discovery.domain }}
+            - --browse-interval={{ .Values.discovery.browseInterval }}
+            - --browse-window={{ .Values.discovery.browseWindow }}
+            - --resync-interval={{ .Values.discovery.resyncInterval }}
+            - --collect-timeout={{ .Values.discovery.collectTimeout }}
+            - --credentials-secret={{ .Values.credentials.name }}
+            - --insecure-tls={{ .Values.insecureTLS }}
+            - --leader-elect={{ .Values.leaderElection }}
+            - --zap-log-level={{ .Values.logLevel }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          ports:
+            - name: metrics
+              containerPort: 8080
+            - name: probes
+              containerPort: 8081
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: probes
+            initialDelaySeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: probes
+            initialDelaySeconds: 5
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

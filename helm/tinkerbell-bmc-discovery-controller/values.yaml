@@ -1,0 +1,40 @@
+image:
+  repository: ghcr.io/tinkerbell-community/tinkerbell-bmc-discovery-controller
+  # Defaults to the chart appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+discovery:
+  # DNS-SD service types to browse. OpenBMC advertises _obmc_redfish._tcp;
+  # standard Redfish services advertise _redfish._tcp.
+  serviceTypes:
+    - _redfish._tcp
+    - _obmc_redfish._tcp
+  domain: local.
+  browseInterval: 5m
+  browseWindow: 30s
+  resyncInterval: 1h
+  collectTimeout: 2m
+
+credentials:
+  # Name of the Secret (in the release namespace) with username/password keys.
+  name: bmc-discovery-credentials
+  # Create the Secret from the values below. Leave false to manage it yourself.
+  create: false
+  username: ""
+  password: ""
+
+# Skip BMC TLS verification (BMCs commonly serve self-signed certificates).
+insecureTLS: true
+
+leaderElection: true
+
+# mDNS needs multicast on the host network.
+hostNetwork: true
+
+logLevel: info
+
+resources: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
