@@ -37,6 +37,7 @@ spec:
             - --resync-interval={{ .Values.discovery.resyncInterval }}
             - --collect-timeout={{ .Values.discovery.collectTimeout }}
             - --credentials-secret={{ .Values.credentials.name }}
+            - --redfish-port={{ .Values.discovery.redfishPort }}
             - --insecure-tls={{ .Values.insecureTLS }}
             - --leader-elect={{ .Values.leaderElection }}
             - --zap-log-level={{ .Values.logLevel }}

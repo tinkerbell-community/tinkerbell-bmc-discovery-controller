@@ -31,15 +31,18 @@ func SanitizeName(s string) string {
 	return out
 }
 
-// ResourceName derives the stable resource name for an endpoint: the
-// sanitized mDNS instance name, falling back to the mDNS hostname, then to
-// the IP address. The name never derives from inventory (e.g. serial), so it
-// is identical before and after inventory collection succeeds.
+// ResourceName derives the stable resource name for an endpoint: the first
+// label of the sanitized mDNS hostname (hostnames are unique on the link and
+// identical across every service type a BMC advertises), falling back to the
+// instance name, then to the IP address. The name never derives from
+// inventory (e.g. serial), so it is identical before and after inventory
+// collection succeeds.
 func ResourceName(ep mdns.Endpoint) string {
-	if name := SanitizeName(ep.Instance); name != "" {
+	host, _, _ := strings.Cut(ep.Hostname, ".")
+	if name := SanitizeName(host); name != "" {
 		return name
 	}
-	if name := SanitizeName(ep.Hostname); name != "" {
+	if name := SanitizeName(ep.Instance); name != "" {
 		return name
 	}
 	return "bmc-" + SanitizeName(strings.NewReplacer(".", "-", ":", "-").Replace(ep.IP.String()))

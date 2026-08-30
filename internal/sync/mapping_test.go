@@ -15,7 +15,7 @@ func testEndpoint() mdns.Endpoint {
 	return mdns.Endpoint{
 		Instance: "X570D4I-2T",
 		Service:  "_obmc_redfish._tcp",
-		Hostname: "bmc.local.",
+		Hostname: "X570D4I-2T.local.",
 		IP:       netip.MustParseAddr("10.0.80.1"),
 		Port:     443,
 	}

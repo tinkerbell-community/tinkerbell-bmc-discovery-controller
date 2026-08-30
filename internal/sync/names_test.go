@@ -36,14 +36,16 @@ func TestResourceName(t *testing.T) {
 		want string
 	}{
 		{
-			name: "from instance",
-			ep:   mdns.Endpoint{Instance: "X570D4I-2T", Hostname: "bmc.local.", IP: ip},
-			want: "x570d4i-2t",
+			// The hostname is service-independent, so a BMC advertising
+			// several service types maps to one resource name.
+			name: "hostname first, domain stripped",
+			ep:   mdns.Endpoint{Instance: "obmc_console on x570d4i2t", Hostname: "x570d4i2t.local.", IP: ip},
+			want: "x570d4i2t",
 		},
 		{
-			name: "falls back to hostname",
-			ep:   mdns.Endpoint{Instance: "()", Hostname: "bmc.local.", IP: ip},
-			want: "bmc-local",
+			name: "falls back to instance",
+			ep:   mdns.Endpoint{Instance: "X570D4I-2T", Hostname: "", IP: ip},
+			want: "x570d4i-2t",
 		},
 		{
 			name: "falls back to IP",

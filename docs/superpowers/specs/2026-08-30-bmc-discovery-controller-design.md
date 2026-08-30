@@ -99,13 +99,24 @@ A single Go binary built on `sigs.k8s.io/controller-runtime`:
 
 ### Naming
 
-Resource name: the sanitized (RFC 1123) mDNS instance name. The instance name
-is stable and unique on the network (mDNS enforces instance uniqueness) and is
-known before inventory succeeds, so the Machine created pre-inventory and the
-Hardware created post-inventory always share one base name. The serial number
-is recorded in `Hardware.spec.metadata.instance.id`, never used for naming.
-Machine and Hardware share the same base name (different Kinds, no conflict),
-e.g. Hardware `x570d4i2t`, Machine `x570d4i2t`, Secret `x570d4i2t-bmc-auth`.
+Resource name: the sanitized (RFC 1123) first label of the mDNS hostname
+(e.g. `x570d4i2t.local.` → `x570d4i2t`), falling back to the instance name,
+then the IP. Hostnames are unique on the link, known before inventory
+succeeds, and — unlike instance names — identical across every service type a
+BMC advertises, so one BMC always maps to one resource set. (Revised
+2026-08-30 from instance-first naming after observing a real OpenBMC
+advertising only `_obmc_console._tcp` with instance name "obmc_console on
+x570d4i2t".) The serial number is recorded in
+`Hardware.spec.metadata.instance.id`, never used for naming. Machine and
+Hardware share the same base name (different Kinds, no conflict), e.g.
+Hardware `x570d4i2t`, Machine `x570d4i2t`, Secret `x570d4i2t-bmc-auth`.
+
+### Redfish port override
+
+`--redfish-port` (default 0 = use the advertised port) replaces the
+mDNS-advertised port on every discovered endpoint. Required when discovery
+rides a non-Redfish advertisement such as `_obmc_console._tcp`, whose
+advertised port (2200, the SOL console) is not the Redfish port.
 
 ### Configuration (flags / helm values)
 

@@ -53,7 +53,7 @@ func testEndpoint() mdns.Endpoint {
 	return mdns.Endpoint{
 		Instance: "X570D4I-2T",
 		Service:  "_obmc_redfish._tcp",
-		Hostname: "bmc.local.",
+		Hostname: "X570D4I-2T.local.",
 		IP:       netip.MustParseAddr("10.0.80.1"),
 		Port:     443,
 	}
@@ -150,6 +150,43 @@ func TestWorkerCollectFailureStillSyncsMachine(t *testing.T) {
 	var hw tinkv1.Hardware
 	if err := c.Get(ctx, types.NamespacedName{Namespace: "tink", Name: "x570d4i-2t"}, &hw); !apierrors.IsNotFound(err) {
 		t.Fatalf("hardware should not exist without inventory, got err=%v", err)
+	}
+}
+
+func TestWorkerRedfishPortOverride(t *testing.T) {
+	// A BMC discovered via a non-Redfish advertisement (e.g.
+	// _obmc_console._tcp on port 2200) still gets a Machine pointing at the
+	// configured Redfish port.
+	ep := testEndpoint()
+	ep.Service = "_obmc_console._tcp"
+	ep.Port = 2200
+
+	w, c := newWorker(t,
+		&fakeBrowser{endpoints: []mdns.Endpoint{ep}},
+		&fakeCollector{err: errors.New("skip inventory")},
+		credsSecret(map[string][]byte{"username": []byte("admin"), "password": []byte("pw")}),
+	)
+	w.RedfishPort = 443
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = w.Start(ctx) }()
+
+	if !eventually(t, func() bool {
+		var machine bmcv1.Machine
+		return c.Get(ctx, types.NamespacedName{Namespace: "tink", Name: "x570d4i-2t"}, &machine) == nil
+	}) {
+		t.Fatal("machine was not created")
+	}
+	var machine bmcv1.Machine
+	if err := c.Get(ctx, types.NamespacedName{Namespace: "tink", Name: "x570d4i-2t"}, &machine); err != nil {
+		t.Fatal(err)
+	}
+	if machine.Spec.Connection.Port != 443 {
+		t.Errorf("connection port = %d, want 443", machine.Spec.Connection.Port)
+	}
+	if opts := machine.Spec.Connection.ProviderOptions; opts == nil || opts.Redfish == nil || opts.Redfish.Port != 443 {
+		t.Errorf("redfish provider port not overridden: %+v", opts)
 	}
 }
 

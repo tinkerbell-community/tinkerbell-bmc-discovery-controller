@@ -36,6 +36,7 @@ func main() {
 		resyncInterval    time.Duration
 		collectTimeout    time.Duration
 		credentialsSecret string
+		redfishPort       int
 		insecureTLS       bool
 		leaderElect       bool
 		metricsAddr       string
@@ -49,6 +50,7 @@ func main() {
 	flag.DurationVar(&resyncInterval, "resync-interval", time.Hour, "Inventory refresh interval for known BMCs.")
 	flag.DurationVar(&collectTimeout, "collect-timeout", 2*time.Minute, "Timeout for one inventory collection.")
 	flag.StringVar(&credentialsSecret, "credentials-secret", "bmc-discovery-credentials", "Name of the Secret holding BMC username/password keys.")
+	flag.IntVar(&redfishPort, "redfish-port", 0, "Redfish port override; 0 uses the mDNS-advertised port. Set (usually to 443) when browsing non-Redfish service types like _obmc_console._tcp.")
 	flag.BoolVar(&insecureTLS, "insecure-tls", true, "Skip BMC TLS verification (BMCs commonly use self-signed certificates).")
 	flag.BoolVar(&leaderElect, "leader-elect", false, "Enable leader election.")
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "Metrics endpoint bind address.")
@@ -106,6 +108,7 @@ func main() {
 		},
 		CredentialsSecret: types.NamespacedName{Namespace: namespace, Name: credentialsSecret},
 		ResyncInterval:    resyncInterval,
+		RedfishPort:       redfishPort,
 		Log:               ctrl.Log.WithName("worker"),
 	}
 	if err := mgr.Add(worker); err != nil {

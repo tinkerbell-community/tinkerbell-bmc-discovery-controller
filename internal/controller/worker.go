@@ -29,7 +29,11 @@ type Worker struct {
 	Syncer            *syncpkg.Syncer
 	CredentialsSecret types.NamespacedName
 	ResyncInterval    time.Duration
-	Log               logr.Logger
+	// RedfishPort, when non-zero, replaces the mDNS-advertised port. Needed
+	// when discovery rides a non-Redfish advertisement (e.g.
+	// _obmc_console._tcp announces the SOL console port, not Redfish).
+	RedfishPort int
+	Log         logr.Logger
 
 	mu    stdsync.Mutex
 	known map[string]mdns.Endpoint
@@ -101,6 +105,9 @@ func (w *Worker) handle(ctx context.Context, key string) error {
 	w.mu.Unlock()
 	if !ok {
 		return nil
+	}
+	if w.RedfishPort != 0 {
+		ep.Port = w.RedfishPort
 	}
 
 	creds, err := w.credentials(ctx)

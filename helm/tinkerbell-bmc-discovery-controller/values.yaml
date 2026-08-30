@@ -15,6 +15,10 @@ discovery:
   browseWindow: 30s
   resyncInterval: 1h
   collectTimeout: 2m
+  # Redfish port override; 0 uses the mDNS-advertised port. Set (usually 443)
+  # when browsing non-Redfish service types such as _obmc_console._tcp, whose
+  # advertised port is the console, not Redfish.
+  redfishPort: 0
 
 credentials:
   # Name of the Secret (in the release namespace) with username/password keys.

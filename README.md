@@ -40,8 +40,24 @@ types.
    - a `Hardware` populated from inventory (only once collection succeeds).
 3. Everything re-syncs periodically; failed collections retry with backoff.
 
-Resource names derive from the sanitized mDNS instance name, so they are
-stable across restarts and across the inventory becoming available.
+Resource names derive from the sanitized first label of the mDNS hostname
+(e.g. `x570d4i2t.local` → `x570d4i2t`), so they are stable across restarts,
+identical for every service type a BMC advertises, and available before
+inventory collection succeeds.
+
+### Discovering BMCs that only advertise a console service
+
+Some OpenBMC builds do not advertise Redfish over mDNS at all — only, say,
+`_obmc_console._tcp` (whose advertised port is the SOL console, not Redfish).
+Discovery can ride any advertisement the BMC does publish; pin the Redfish
+port explicitly:
+
+```yaml
+discovery:
+  serviceTypes:
+    - _obmc_console._tcp
+  redfishPort: 443
+```
 
 ### Ownership and deletion semantics
 
@@ -87,6 +103,7 @@ helm install bmc-discovery \
 | `--resync-interval` | `discovery.resyncInterval` | `1h` | Inventory refresh for known BMCs |
 | `--collect-timeout` | `discovery.collectTimeout` | `2m` | Timeout per inventory collection |
 | `--credentials-secret` | `credentials.name` | `bmc-discovery-credentials` | Secret with `username`/`password` |
+| `--redfish-port` | `discovery.redfishPort` | `0` (advertised port) | Redfish port override for non-Redfish advertisements |
 | `--insecure-tls` | `insecureTLS` | `true` | Skip BMC TLS verification |
 | `--leader-elect` | `leaderElection` | `false` (chart: `true`) | Leader election |
 
