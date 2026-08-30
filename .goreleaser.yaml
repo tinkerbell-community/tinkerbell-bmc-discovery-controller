@@ -1,0 +1,59 @@
+version: 2
+
+env:
+  - REGISTRY={{ envOrDefault "REGISTRY" "ghcr.io" }}
+  - IS_RELEASE={{ envOrDefault "IS_RELEASE" "false" }}
+
+builds:
+  - id: manager
+    env: ["CGO_ENABLED=0"]
+    main: ./cmd
+    binary: manager
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}} -X main.builtBy=goreleaser
+      - -extldflags '-static'
+
+checksum:
+  name_template: "{{ .ArtifactName }}-checksums.txt"
+  split: true
+
+release:
+  disable: true
+
+snapshot:
+  version_template: "{{ .Version }}-next"
+
+changelog:
+  disable: '{{ if eq .Env.IS_RELEASE "true" }}false{{ else }}true{{ end }}'
+
+dockers_v2:
+  - id: manager
+    dockerfile: Dockerfile
+    extra_files:
+      - LICENSE
+    images:
+      - '{{ .Env.REGISTRY }}/{{ envOrDefault "IMAGE_NAME" (trimsuffix (trimprefix .GitURL "https://github.com/") ".git") }}'
+    tags:
+      # No v prefix: the helm chart's default image tag is the bare
+      # appVersion (e.g. "0.1.2").
+      - '{{ if eq .Env.IS_RELEASE "true" }}{{ .Version }}{{ end }}'
+      - "{{ if not .IsNightly }}latest{{ end }}"
+      - '{{ if eq .Branch "main" }}sha-{{ .ShortCommit }}{{ end }}'
+    labels:
+      "org.opencontainers.image.created": "{{.Date}}"
+      "org.opencontainers.image.name": "{{.ProjectName}}"
+      "org.opencontainers.image.revision": "{{.FullCommit}}"
+      "org.opencontainers.image.version": "{{.Version}}"
+      "org.opencontainers.image.source": "{{.GitURL}}"
+
+docker_signs:
+  - cmd: cosign
+    args:
+      - "sign"
+      - "--yes"
+      - "${artifact}@${digest}"

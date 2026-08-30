@@ -1,3 +1,35 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+cover.out
+coverage.txt
+
+# Go workspace file
+go.work
+go.work.sum
+
+# env file
+.env
+
+# local binaries and build output
+out/
 bin/
 dist/
-cover.out
+
+kubeconfig
+
+# helm chart files and directories
+*.tgz
+Chart.lock
+
+.DS_Store
+Thumbs.db

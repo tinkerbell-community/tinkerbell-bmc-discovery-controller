@@ -113,7 +113,8 @@ helm install bmc-discovery \
 make build      # compile to bin/manager
 make test       # go test -race ./...
 make vet        # go vet
-make docker-build
+make lint       # golangci-lint run
+make snapshot   # goreleaser local build (binaries + images, no publish)
 make helm-lint
 ```
 

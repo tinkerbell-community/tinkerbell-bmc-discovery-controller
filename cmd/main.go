@@ -26,6 +26,14 @@ import (
 	syncpkg "github.com/tinkerbell-community/tinkerbell-bmc-discovery-controller/internal/sync"
 )
 
+// Build metadata injected by goreleaser via -ldflags.
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+	builtBy = "unknown"
+)
+
 func main() {
 	var (
 		namespace         string
@@ -61,6 +69,7 @@ func main() {
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&zapOpts)))
 	log := ctrl.Log.WithName("setup")
+	log.Info("tinkerbell-bmc-discovery-controller", "version", version, "commit", commit, "date", date, "builtBy", builtBy)
 
 	scheme := runtime.NewScheme()
 	for _, add := range []func(*runtime.Scheme) error{clientgoscheme.AddToScheme, bmcv1.AddToScheme, tinkv1.AddToScheme} {

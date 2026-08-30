@@ -17,9 +17,15 @@ vet:
 fmt-check:
 	@out="$$(gofmt -l .)"; if [ -n "$$out" ]; then echo "gofmt needed on:"; echo "$$out"; exit 1; fi
 
-.PHONY: docker-build
-docker-build:
-	docker build -t $(IMAGE):$(TAG) .
+.PHONY: lint
+lint:
+	golangci-lint run
+
+# Build binaries and container images locally via goreleaser without
+# publishing or signing anything.
+.PHONY: snapshot
+snapshot:
+	goreleaser release --clean --snapshot --skip=sign,publish
 
 .PHONY: helm-lint
 helm-lint:
