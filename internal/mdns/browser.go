@@ -61,19 +61,9 @@ func (b *ZeroconfBrowser) browseOnce(ctx context.Context, events chan<- Endpoint
 	bctx, cancel := context.WithTimeout(ctx, b.Window)
 	defer cancel()
 
-	// Discovery is IPv4-only: BMC IPv6 advertisements are typically
-	// link-local or ULA addresses that are not reachable from the cluster.
-	opts := []zeroconf.ClientOption{zeroconf.SelectIPTraffic(zeroconf.IPv4)}
-	if len(b.Interfaces) > 0 {
-		ifaces, missing := resolveInterfaces(b.Interfaces)
-		if len(missing) > 0 {
-			b.Log.Info("some mDNS interfaces not found", "missing", missing)
-		}
-		if len(ifaces) == 0 {
-			b.Log.Info("no configured mDNS interface exists yet; skipping browse cycle", "interfaces", b.Interfaces)
-			return
-		}
-		opts = append(opts, zeroconf.SelectIfaces(ifaces))
+	opts, ok := b.clientOptions()
+	if !ok {
+		return
 	}
 
 	var wg sync.WaitGroup
@@ -81,31 +71,13 @@ func (b *ZeroconfBrowser) browseOnce(ctx context.Context, events chan<- Endpoint
 		// zeroconf.Browse blocks until bctx is done and closes entries via
 		// the mainloop; the forwarder must not close it (double close) and
 		// must not rely on it being closed (Browse can fail before the
-		// mainloop starts), hence the select on bctx.Done().
+		// mainloop starts), hence forward's select on bctx.Done().
 		entries := make(chan *zeroconf.ServiceEntry, 16)
 
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for {
-				select {
-				case entry, ok := <-entries:
-					if !ok {
-						return
-					}
-					ep, ok := EntryToEndpoint(entry)
-					if !ok {
-						continue
-					}
-					select {
-					case events <- ep:
-					case <-bctx.Done():
-						return
-					}
-				case <-bctx.Done():
-					return
-				}
-			}
+			forward(bctx, entries, events)
 		}()
 
 		wg.Add(1)
@@ -117,6 +89,50 @@ func (b *ZeroconfBrowser) browseOnce(ctx context.Context, events chan<- Endpoint
 		}(svc)
 	}
 	wg.Wait()
+}
+
+// clientOptions builds the zeroconf client options for one browse cycle. It
+// returns false when the configured interfaces do not exist yet, in which
+// case the cycle is skipped and retried on the next interval.
+func (b *ZeroconfBrowser) clientOptions() ([]zeroconf.ClientOption, bool) {
+	// Discovery is IPv4-only: BMC IPv6 advertisements are typically
+	// link-local or ULA addresses that are not reachable from the cluster.
+	opts := []zeroconf.ClientOption{zeroconf.SelectIPTraffic(zeroconf.IPv4)}
+	if len(b.Interfaces) == 0 {
+		return opts, true
+	}
+	ifaces, missing := resolveInterfaces(b.Interfaces)
+	if len(missing) > 0 {
+		b.Log.Info("some mDNS interfaces not found", "missing", missing)
+	}
+	if len(ifaces) == 0 {
+		b.Log.Info("no configured mDNS interface exists yet; skipping browse cycle", "interfaces", b.Interfaces)
+		return nil, false
+	}
+	return append(opts, zeroconf.SelectIfaces(ifaces)), true
+}
+
+// forward converts entries to endpoints until ctx is done or entries closes.
+func forward(ctx context.Context, entries <-chan *zeroconf.ServiceEntry, events chan<- Endpoint) {
+	for {
+		select {
+		case entry, ok := <-entries:
+			if !ok {
+				return
+			}
+			ep, ok := EntryToEndpoint(entry)
+			if !ok {
+				continue
+			}
+			select {
+			case events <- ep:
+			case <-ctx.Done():
+				return
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 // resolveInterfaces looks up interfaces by name, returning the ones that
