@@ -32,13 +32,16 @@ types.
 1. The browser continuously browses configurable DNS-SD service types.
    OpenBMC advertises `_obmc_redfish._tcp` via Avahi; standard Redfish
    services advertise `_redfish._tcp`.
-2. For each discovered endpoint the worker reads the shared BMC credentials
-   Secret, collects inventory over Redfish, and upserts:
+2. For each discovered endpoint the worker resolves credentials — the shared
+   BMC credentials Secret when it exists, else the per-service-type defaults
+   (OpenBMC ships `root`/`0penBmc`, preconfigured for `_obmc_console._tcp`) —
+   and **verifies the connection** by authenticating and collecting inventory
+   over Redfish. Nothing is created for a BMC that cannot be verified.
+3. Once verified, it upserts:
    - a per-machine auth Secret `<name>-bmc-auth` (username/password),
-   - a `Machine` pointing at the BMC (created even when inventory collection
-     fails — connection details are known from mDNS alone),
-   - a `Hardware` populated from inventory (only once collection succeeds).
-3. Everything re-syncs periodically; failed collections retry with backoff.
+   - a `Machine` pointing at the BMC,
+   - a `Hardware` populated from the collected inventory.
+4. Everything re-syncs periodically; unverifiable BMCs retry with backoff.
 
 Resource names derive from the sanitized first label of the mDNS hostname
 (e.g. `x570d4i2t.local` → `x570d4i2t`), so they are stable across restarts,
@@ -127,6 +130,7 @@ link-local or ULA addresses unreachable from the cluster).
 | `--resync-interval` | `discovery.resyncInterval` | `1h` | Inventory refresh for known BMCs |
 | `--collect-timeout` | `discovery.collectTimeout` | `2m` | Timeout per inventory collection |
 | `--credentials-secret` | `credentials.name` | `bmc-discovery-credentials` | Secret with `username`/`password` |
+| `--default-credentials` | `credentials.defaults` | `_obmc_console._tcp=root:0penBmc` | Per-service fallbacks when the Secret is absent |
 | `--redfish-port` | `discovery.redfishPort` | `0` (advertised port) | Redfish port override for non-Redfish advertisements |
 | `--insecure-tls` | `insecureTLS` | `true` | Skip BMC TLS verification |
 | `--leader-elect` | `leaderElection` | `false` (chart: `true`) | Leader election |

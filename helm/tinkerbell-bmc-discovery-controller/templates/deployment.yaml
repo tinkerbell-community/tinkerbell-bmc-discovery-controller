@@ -44,6 +44,11 @@ spec:
             - --resync-interval={{ .Values.discovery.resyncInterval }}
             - --collect-timeout={{ .Values.discovery.collectTimeout }}
             - --credentials-secret={{ .Values.credentials.name }}
+            {{- $defaults := list }}
+            {{- range $svc, $cred := .Values.credentials.defaults }}
+            {{- $defaults = append $defaults (printf "%s=%s:%s" $svc $cred.username $cred.password) }}
+            {{- end }}
+            - --default-credentials={{ join "," $defaults }}
             - --redfish-port={{ .Values.discovery.redfishPort }}
             {{- if .Values.networking.multus.enabled }}
             - --mdns-interfaces={{ .Values.networking.multus.interface }}

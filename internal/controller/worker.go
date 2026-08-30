@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/workqueue"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -28,7 +29,11 @@ type Worker struct {
 	Collector         inventory.Collector
 	Syncer            *syncpkg.Syncer
 	CredentialsSecret types.NamespacedName
-	ResyncInterval    time.Duration
+	// DefaultCredentials supplies fallback credentials keyed by DNS-SD
+	// service type, used only when the credentials Secret does not exist
+	// (e.g. OpenBMC's factory root/0penBmc for _obmc_console._tcp).
+	DefaultCredentials map[string]inventory.Credentials
+	ResyncInterval     time.Duration
 	// RedfishPort, when non-zero, replaces the mDNS-advertised port. Needed
 	// when discovery rides a non-Redfish advertisement (e.g.
 	// _obmc_console._tcp announces the SOL console port, not Redfish).
@@ -110,28 +115,29 @@ func (w *Worker) handle(ctx context.Context, key string) error {
 		ep.Port = w.RedfishPort
 	}
 
-	creds, err := w.credentials(ctx)
+	creds, err := w.credentials(ctx, ep)
 	if err != nil {
 		return err
 	}
 
-	dev, collectErr := w.Collector.Collect(ctx, ep, creds)
-	if collectErr != nil {
-		w.Log.Info("inventory collection failed; syncing connection-only Machine",
-			"endpoint", key, "error", collectErr.Error())
-		dev = nil
-	}
-
-	if err := w.Syncer.Sync(ctx, ep, dev, creds); err != nil {
+	// Collect doubles as connection verification: resources are only
+	// created for BMCs we can authenticate to and inventory.
+	dev, err := w.Collector.Collect(ctx, ep, creds)
+	if err != nil {
+		w.Log.Info("BMC connection could not be verified; deferring resource creation",
+			"endpoint", key, "error", err.Error())
 		return err
 	}
-	// A successful Sync of a connection-only Machine still retries collection.
-	return collectErr
+
+	return w.Syncer.Sync(ctx, ep, dev, creds)
 }
 
-func (w *Worker) credentials(ctx context.Context) (inventory.Credentials, error) {
+func (w *Worker) credentials(ctx context.Context, ep mdns.Endpoint) (inventory.Credentials, error) {
 	var secret corev1.Secret
 	if err := w.Client.Get(ctx, w.CredentialsSecret, &secret); err != nil {
+		if creds, ok := w.DefaultCredentials[ep.Service]; ok && apierrors.IsNotFound(err) {
+			return creds, nil
+		}
 		return inventory.Credentials{}, fmt.Errorf("reading credentials secret %s: %w", w.CredentialsSecret, err)
 	}
 	username, password := secret.Data["username"], secret.Data["password"]

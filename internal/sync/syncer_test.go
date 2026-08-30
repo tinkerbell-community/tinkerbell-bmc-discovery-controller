@@ -89,22 +89,20 @@ func TestSyncCreatesAll(t *testing.T) {
 	}
 }
 
-func TestSyncWithoutInventorySkipsHardware(t *testing.T) {
+func TestSyncRequiresInventory(t *testing.T) {
+	// Resources are only created for BMCs with a verified connection, which
+	// inventory collection proves; a nil device is a caller bug.
 	s, c := newTestSyncer(t)
 	ctx := context.Background()
 
-	if err := s.Sync(ctx, testEndpoint(), nil, testCreds); err != nil {
-		t.Fatalf("Sync: %v", err)
+	if err := s.Sync(ctx, testEndpoint(), nil, testCreds); err == nil {
+		t.Fatal("Sync with nil device should error")
 	}
 
 	var machine bmcv1.Machine
-	if err := c.Get(ctx, types.NamespacedName{Namespace: "tink", Name: "x570d4i-2t"}, &machine); err != nil {
-		t.Fatalf("machine: %v", err)
-	}
-	var hw tinkv1.Hardware
-	err := c.Get(ctx, types.NamespacedName{Namespace: "tink", Name: "x570d4i-2t"}, &hw)
+	err := c.Get(ctx, types.NamespacedName{Namespace: "tink", Name: "x570d4i-2t"}, &machine)
 	if !apierrors.IsNotFound(err) {
-		t.Fatalf("hardware should not exist, got err=%v", err)
+		t.Fatalf("machine should not exist, got err=%v", err)
 	}
 }
 

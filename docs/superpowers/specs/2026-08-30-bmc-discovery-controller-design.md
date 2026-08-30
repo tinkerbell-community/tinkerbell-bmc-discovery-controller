@@ -135,9 +135,13 @@ advertised port (2200, the SOL console) is not the Redfish port.
 ### Error handling
 
 - Collect failure (unreachable BMC, bad creds): logged, retried with backoff
-  via workqueue; a Machine is still created from the mDNS endpoint alone
-  (connection info is known without inventory), Hardware creation waits for
-  inventory (agentID/MACs are required to be useful).
+  via workqueue; NO resources are created until the BMC connection is
+  verified by a successful authenticated inventory collection. (Revised
+  2026-08-30: originally a connection-only Machine was created from mDNS
+  data alone; connection verification is now required first.)
+- Credentials: the shared Secret wins when present; when it does not exist,
+  per-service-type defaults apply (`--default-credentials`, preconfigured
+  with OpenBMC's factory `root`/`0penBmc` for `_obmc_console._tcp`).
 - Upsert conflict: standard retry-on-conflict via CreateOrUpdate requeue.
 - mDNS browse failure: logged, next cycle retries; browse failures never
   crash the manager.

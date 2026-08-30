@@ -130,7 +130,8 @@ func TestWorkerSyncsDiscoveredEndpoint(t *testing.T) {
 	}
 }
 
-func TestWorkerCollectFailureStillSyncsMachine(t *testing.T) {
+func TestWorkerCollectFailureCreatesNothing(t *testing.T) {
+	// An unverifiable BMC connection must not produce any resources.
 	w, c := newWorker(t,
 		&fakeBrowser{endpoints: []mdns.Endpoint{testEndpoint()}},
 		&fakeCollector{err: errors.New("bmc unreachable")},
@@ -141,15 +142,46 @@ func TestWorkerCollectFailureStillSyncsMachine(t *testing.T) {
 	defer cancel()
 	go func() { _ = w.Start(ctx) }()
 
+	time.Sleep(300 * time.Millisecond)
+	var machine bmcv1.Machine
+	if err := c.Get(ctx, types.NamespacedName{Namespace: "tink", Name: "x570d4i-2t"}, &machine); !apierrors.IsNotFound(err) {
+		t.Fatalf("machine should not exist without a verified connection, got err=%v", err)
+	}
+	var hw tinkv1.Hardware
+	if err := c.Get(ctx, types.NamespacedName{Namespace: "tink", Name: "x570d4i-2t"}, &hw); !apierrors.IsNotFound(err) {
+		t.Fatalf("hardware should not exist without a verified connection, got err=%v", err)
+	}
+}
+
+func TestWorkerDefaultCredentials(t *testing.T) {
+	// With no credentials Secret, the per-service-type default applies.
+	dev := common.NewDevice()
+	dev.NICs = []*common.NIC{{NICPorts: []*common.NICPort{{MacAddress: "aa:bb:cc:dd:ee:01"}}}}
+
+	w, c := newWorker(t,
+		&fakeBrowser{endpoints: []mdns.Endpoint{testEndpoint()}},
+		&fakeCollector{dev: &dev},
+	)
+	w.DefaultCredentials = map[string]inventory.Credentials{
+		"_obmc_redfish._tcp": {Username: "root", Password: "0penBmc"},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = w.Start(ctx) }()
+
 	if !eventually(t, func() bool {
 		var machine bmcv1.Machine
 		return c.Get(ctx, types.NamespacedName{Namespace: "tink", Name: "x570d4i-2t"}, &machine) == nil
 	}) {
-		t.Fatal("machine was not created")
+		t.Fatal("machine was not created with default credentials")
 	}
-	var hw tinkv1.Hardware
-	if err := c.Get(ctx, types.NamespacedName{Namespace: "tink", Name: "x570d4i-2t"}, &hw); !apierrors.IsNotFound(err) {
-		t.Fatalf("hardware should not exist without inventory, got err=%v", err)
+	var secret corev1.Secret
+	if err := c.Get(ctx, types.NamespacedName{Namespace: "tink", Name: "x570d4i-2t-bmc-auth"}, &secret); err != nil {
+		t.Fatal(err)
+	}
+	if string(secret.Data["username"]) != "root" || string(secret.Data["password"]) != "0penBmc" {
+		t.Errorf("auth secret data = %v, want root/0penBmc", secret.Data)
 	}
 }
 
@@ -161,9 +193,11 @@ func TestWorkerRedfishPortOverride(t *testing.T) {
 	ep.Service = "_obmc_console._tcp"
 	ep.Port = 2200
 
+	dev := common.NewDevice()
+	dev.NICs = []*common.NIC{{NICPorts: []*common.NICPort{{MacAddress: "aa:bb:cc:dd:ee:01"}}}}
 	w, c := newWorker(t,
 		&fakeBrowser{endpoints: []mdns.Endpoint{ep}},
-		&fakeCollector{err: errors.New("skip inventory")},
+		&fakeCollector{dev: &dev},
 		credsSecret(map[string][]byte{"username": []byte("admin"), "password": []byte("pw")}),
 	)
 	w.RedfishPort = 443

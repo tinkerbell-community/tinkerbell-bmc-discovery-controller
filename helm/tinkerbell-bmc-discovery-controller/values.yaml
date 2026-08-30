@@ -27,6 +27,14 @@ credentials:
   create: false
   username: ""
   password: ""
+  # Fallback credentials keyed by DNS-SD service type, used only when the
+  # Secret above does not exist. OpenBMC ships with root/0penBmc from the
+  # factory. These are well-known vendor defaults, not secrets — anything
+  # sensitive belongs in the Secret, which always wins when present.
+  defaults:
+    _obmc_console._tcp:
+      username: root
+      password: 0penBmc
 
 # Skip BMC TLS verification (BMCs commonly serve self-signed certificates).
 insecureTLS: true

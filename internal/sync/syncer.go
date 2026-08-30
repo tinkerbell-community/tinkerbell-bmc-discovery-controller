@@ -32,11 +32,15 @@ type Syncer struct {
 	Log         logr.Logger
 }
 
-// Sync upserts the auth Secret, Machine, and (when inventory is available)
-// Hardware for an endpoint. dev may be nil: connection details are known from
-// mDNS alone, so the Machine is still maintained. Existing resources without
-// the managed-by label are skipped, never modified.
+// Sync upserts the auth Secret, Machine, and Hardware for an endpoint whose
+// BMC connection has been verified — dev is the collected inventory and must
+// not be nil, so resources only ever describe reachable, authenticated BMCs.
+// Existing resources without the managed-by label are skipped, never
+// modified.
 func (s *Syncer) Sync(ctx context.Context, ep mdns.Endpoint, dev *common.Device, creds inventory.Credentials) error {
+	if dev == nil {
+		return errors.New("refusing to sync without verified inventory")
+	}
 	name := ResourceName(ep)
 	authName := name + "-bmc-auth"
 
@@ -58,10 +62,6 @@ func (s *Syncer) Sync(ctx context.Context, ep mdns.Endpoint, dev *common.Device,
 		})
 	}); err != nil {
 		return fmt.Errorf("syncing machine %s: %w", name, err)
-	}
-
-	if dev == nil {
-		return nil
 	}
 
 	hardware := &tinkv1.Hardware{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: s.Namespace}}
