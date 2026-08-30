@@ -48,15 +48,16 @@ networking:
     master: eth0
     # ipvlan mode: l2 supports multicast receive.
     mode: l2
-    # Raw CNI IPAM config for the attachment, rendered as JSON. The pod
-    # needs an IPv4 address on the BMC network for mDNS. host-local keeps
-    # allocation state per node, which is fine for this single-replica
-    # controller; adjust the subnet/range to your BMC network.
+    # Raw CNI IPAM config for the attachment, rendered as JSON. mDNS is
+    # link-local multicast, so the interface only needs an IPv4 link-local
+    # address (169.254.0.0/16) — no routable IP on the BMC VLAN is consumed.
+    # host-local keeps allocation state per node, which is fine for this
+    # single-replica controller.
     ipam:
       type: host-local
-      subnet: 10.0.80.0/24
-      rangeStart: 10.0.80.240
-      rangeEnd: 10.0.80.250
+      subnet: 169.254.200.0/24
+      rangeStart: 169.254.200.10
+      rangeEnd: 169.254.200.50
     # Pod interface name Multus assigns; mDNS browsing binds to it.
     interface: net1
 

@@ -104,11 +104,11 @@ networking:
   multus:
     enabled: true          # turns hostNetwork off
     master: eth0           # node uplink carrying the BMC VLAN
-    ipam:                  # any CNI IPAM config; the pod needs an IPv4
-      type: host-local     # address on the BMC network
-      subnet: 10.0.80.0/24
-      rangeStart: 10.0.80.240
-      rangeEnd: 10.0.80.250
+    ipam:                  # mDNS is link-local multicast, so a link-local
+      type: host-local     # address suffices — no BMC VLAN IP is consumed
+      subnet: 169.254.200.0/24
+      rangeStart: 169.254.200.10
+      rangeEnd: 169.254.200.50
 ```
 
 Discovery itself is IPv4-only (BMC IPv6 advertisements are typically
