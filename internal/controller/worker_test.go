@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/netip"
 	"testing"
 	"time"
@@ -75,6 +76,7 @@ func newWorker(t *testing.T, browser mdns.Browser, collector inventory.Collector
 		}
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
+	discard := slog.New(slog.DiscardHandler)
 	return &Worker{
 		Client:    c,
 		Browser:   browser,
@@ -84,9 +86,11 @@ func newWorker(t *testing.T, browser mdns.Browser, collector inventory.Collector
 			Namespace:   "tink",
 			InsecureTLS: true,
 			Now:         time.Now,
+			Log:         discard,
 		},
 		CredentialsSecret: types.NamespacedName{Namespace: "tink", Name: "bmc-discovery-credentials"},
 		ResyncInterval:    time.Hour,
+		Log:               discard,
 	}, c
 }
 

@@ -3,12 +3,12 @@ package mdns
 
 import (
 	"context"
+	"log/slog"
 	"net"
 	"net/netip"
 	"sync"
 	"time"
 
-	"github.com/go-logr/logr"
 	"github.com/libp2p/zeroconf/v2"
 )
 
@@ -33,7 +33,7 @@ type Browser interface {
 
 // ZeroconfBrowser browses a set of DNS-SD service types in cycles.
 type ZeroconfBrowser struct {
-	Log          logr.Logger
+	Log          *slog.Logger
 	ServiceTypes []string
 	Domain       string
 	Interval     time.Duration // time between browse cycles
@@ -65,6 +65,8 @@ func (b *ZeroconfBrowser) browseOnce(ctx context.Context, events chan<- Endpoint
 	if !ok {
 		return
 	}
+	b.Log.Debug("starting mDNS browse cycle",
+		"serviceTypes", b.ServiceTypes, "domain", b.Domain, "window", b.Window.String(), "interfaces", b.Interfaces)
 
 	var wg sync.WaitGroup
 	for _, svc := range b.ServiceTypes {
@@ -77,18 +79,19 @@ func (b *ZeroconfBrowser) browseOnce(ctx context.Context, events chan<- Endpoint
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			forward(bctx, entries, events)
+			b.forward(bctx, entries, events)
 		}()
 
 		wg.Add(1)
 		go func(svc string) {
 			defer wg.Done()
 			if err := zeroconf.Browse(bctx, svc, b.Domain, entries, opts...); err != nil && ctx.Err() == nil {
-				b.Log.Error(err, "mDNS browse failed", "service", svc)
+				b.Log.Error("mDNS browse failed", "service", svc, "err", err)
 			}
 		}(svc)
 	}
 	wg.Wait()
+	b.Log.Debug("mDNS browse cycle complete", "nextCycleIn", b.Interval.String())
 }
 
 // clientOptions builds the zeroconf client options for one browse cycle. It
@@ -103,17 +106,17 @@ func (b *ZeroconfBrowser) clientOptions() ([]zeroconf.ClientOption, bool) {
 	}
 	ifaces, missing := resolveInterfaces(b.Interfaces)
 	if len(missing) > 0 {
-		b.Log.Info("some mDNS interfaces not found", "missing", missing)
+		b.Log.Warn("some mDNS interfaces not found", "missing", missing)
 	}
 	if len(ifaces) == 0 {
-		b.Log.Info("no configured mDNS interface exists yet; skipping browse cycle", "interfaces", b.Interfaces)
+		b.Log.Warn("no configured mDNS interface exists yet; skipping browse cycle", "interfaces", b.Interfaces)
 		return nil, false
 	}
 	return append(opts, zeroconf.SelectIfaces(ifaces)), true
 }
 
 // forward converts entries to endpoints until ctx is done or entries closes.
-func forward(ctx context.Context, entries <-chan *zeroconf.ServiceEntry, events chan<- Endpoint) {
+func (b *ZeroconfBrowser) forward(ctx context.Context, entries <-chan *zeroconf.ServiceEntry, events chan<- Endpoint) {
 	for {
 		select {
 		case entry, ok := <-entries:
@@ -122,8 +125,12 @@ func forward(ctx context.Context, entries <-chan *zeroconf.ServiceEntry, events 
 			}
 			ep, ok := EntryToEndpoint(entry)
 			if !ok {
+				b.Log.Debug("ignoring mDNS entry without IPv4 address",
+					"instance", entry.Instance, "service", entry.Service, "hostname", entry.HostName)
 				continue
 			}
+			b.Log.Debug("observed mDNS advertisement",
+				"instance", ep.Instance, "service", ep.Service, "hostname", ep.Hostname, "ip", ep.IP.String(), "port", ep.Port)
 			select {
 			case events <- ep:
 			case <-ctx.Done():

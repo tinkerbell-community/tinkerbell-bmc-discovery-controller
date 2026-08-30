@@ -5,10 +5,10 @@ package controller
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	stdsync "sync"
 	"time"
 
-	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
@@ -38,7 +38,7 @@ type Worker struct {
 	// when discovery rides a non-Redfish advertisement (e.g.
 	// _obmc_console._tcp announces the SOL console port, not Redfish).
 	RedfishPort int
-	Log         logr.Logger
+	Log         *slog.Logger
 
 	mu    stdsync.Mutex
 	known map[string]mdns.Endpoint
@@ -59,10 +59,11 @@ func (w *Worker) Start(ctx context.Context) error {
 	queue := workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]())
 	defer queue.ShutDown()
 
+	w.Log.Info("starting BMC discovery", "resyncInterval", w.ResyncInterval.String())
 	events := make(chan mdns.Endpoint, 16)
 	go func() {
 		if err := w.Browser.Run(ctx, events); err != nil {
-			w.Log.Error(err, "mDNS browser stopped")
+			w.Log.Error("mDNS browser stopped", "err", err)
 		}
 	}()
 	go w.processQueue(ctx, queue)
@@ -75,15 +76,25 @@ func (w *Worker) Start(ctx context.Context) error {
 			return nil
 		case ep := <-events:
 			w.mu.Lock()
+			_, seen := w.known[ep.Key()]
 			w.known[ep.Key()] = ep
 			w.mu.Unlock()
+			if seen {
+				w.Log.Debug("BMC re-observed via mDNS", "endpoint", ep.Key(), "host", ep.IP.String())
+			} else {
+				w.Log.Info("new BMC discovered via mDNS",
+					"endpoint", ep.Key(), "instance", ep.Instance, "service", ep.Service,
+					"hostname", ep.Hostname, "host", ep.IP.String(), "port", ep.Port)
+			}
 			queue.Add(ep.Key())
 		case <-ticker.C:
 			w.mu.Lock()
+			n := len(w.known)
 			for key := range w.known {
 				queue.Add(key)
 			}
 			w.mu.Unlock()
+			w.Log.Debug("periodic resync of known BMCs", "count", n)
 		}
 	}
 }
@@ -95,7 +106,7 @@ func (w *Worker) processQueue(ctx context.Context, queue workqueue.TypedRateLimi
 			return
 		}
 		if err := w.handle(ctx, key); err != nil {
-			w.Log.Info("sync failed; will retry", "endpoint", key, "error", err.Error())
+			w.Log.Warn("sync failed; will retry with backoff", "endpoint", key, "err", err)
 			queue.AddRateLimited(key)
 		} else {
 			queue.Forget(key)
@@ -115,6 +126,9 @@ func (w *Worker) handle(ctx context.Context, key string) error {
 		ep.Port = w.RedfishPort
 	}
 
+	log := w.Log.With("endpoint", key, "host", ep.IP.String(), "port", ep.Port)
+	log.Debug("handling BMC endpoint")
+
 	creds, err := w.credentials(ctx, ep)
 	if err != nil {
 		return err
@@ -122,12 +136,13 @@ func (w *Worker) handle(ctx context.Context, key string) error {
 
 	// Collect doubles as connection verification: resources are only
 	// created for BMCs we can authenticate to and inventory.
+	log.Debug("verifying BMC connection and collecting inventory")
 	dev, err := w.Collector.Collect(ctx, ep, creds)
 	if err != nil {
-		w.Log.Info("BMC connection could not be verified; deferring resource creation",
-			"endpoint", key, "error", err.Error())
+		log.Warn("BMC connection could not be verified; deferring resource creation", "err", err)
 		return err
 	}
+	log.Info("BMC connection verified", "vendor", dev.Vendor, "model", dev.Model, "serial", dev.Serial)
 
 	return w.Syncer.Sync(ctx, ep, dev, creds)
 }
@@ -136,10 +151,13 @@ func (w *Worker) credentials(ctx context.Context, ep mdns.Endpoint) (inventory.C
 	var secret corev1.Secret
 	if err := w.Client.Get(ctx, w.CredentialsSecret, &secret); err != nil {
 		if creds, ok := w.DefaultCredentials[ep.Service]; ok && apierrors.IsNotFound(err) {
+			w.Log.Debug("credentials secret absent; using service-type default credentials",
+				"secret", w.CredentialsSecret.String(), "service", ep.Service, "username", creds.Username)
 			return creds, nil
 		}
 		return inventory.Credentials{}, fmt.Errorf("reading credentials secret %s: %w", w.CredentialsSecret, err)
 	}
+	w.Log.Debug("using credentials from secret", "secret", w.CredentialsSecret.String())
 	username, password := secret.Data["username"], secret.Data["password"]
 	if len(username) == 0 || len(password) == 0 {
 		return inventory.Credentials{}, fmt.Errorf("credentials secret %s must contain username and password keys", w.CredentialsSecret)

@@ -69,7 +69,10 @@ networking:
     # Pod interface name Multus assigns; mDNS browsing binds to it.
     interface: net1
 
+# debug, info, warn, or error. debug logs every discovery/verification step.
 logLevel: info
+# json or text.
+logFormat: json
 
 resources: {}
 nodeSelector: {}

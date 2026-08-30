@@ -5,10 +5,12 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/go-logr/logr"
 	bmcv1 "github.com/tinkerbell/tinkerbell/api/v1alpha1/bmc"
 	tinkv1 "github.com/tinkerbell/tinkerbell/api/v1alpha1/tinkerbell"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -17,11 +19,11 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
-	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	"github.com/tinkerbell-community/tinkerbell-bmc-discovery-controller/internal/controller"
 	"github.com/tinkerbell-community/tinkerbell-bmc-discovery-controller/internal/inventory"
+	"github.com/tinkerbell-community/tinkerbell-bmc-discovery-controller/internal/logging"
 	"github.com/tinkerbell-community/tinkerbell-bmc-discovery-controller/internal/mdns"
 	syncpkg "github.com/tinkerbell-community/tinkerbell-bmc-discovery-controller/internal/sync"
 )
@@ -63,6 +65,8 @@ func main() {
 		leaderElect       bool
 		metricsAddr       string
 		probeAddr         string
+		logLevel          string
+		logFormat         string
 	)
 	flag.StringVar(&namespace, "namespace", "tink", "Namespace for created resources and the credentials secret.")
 	flag.StringVar(&serviceTypes, "service-types", "_redfish._tcp,_obmc_redfish._tcp", "Comma-separated DNS-SD service types to browse.")
@@ -79,24 +83,32 @@ func main() {
 	flag.BoolVar(&leaderElect, "leader-elect", false, "Enable leader election.")
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "Metrics endpoint bind address.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "Health probe bind address.")
-	zapOpts := zap.Options{}
-	zapOpts.BindFlags(flag.CommandLine)
+	flag.StringVar(&logLevel, "log-level", "info", "Log level: debug, info, warn, or error.")
+	flag.StringVar(&logFormat, "log-format", "json", "Log format: json or text.")
 	flag.Parse()
 
-	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&zapOpts)))
-	log := ctrl.Log.WithName("setup")
+	root, err := logging.New(logLevel, logFormat, os.Stderr)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	// controller-runtime and bmclib speak logr; bridge them onto slog. No
+	// Component wrapper here: logr's WithName renders as the "logger"
+	// attribute already, so wrapping would duplicate the key.
+	ctrl.SetLogger(logr.FromSlogHandler(root.Handler()))
+	log := logging.Component(root, "setup")
 	log.Info("tinkerbell-bmc-discovery-controller", "version", version, "commit", commit, "date", date, "builtBy", builtBy)
 
 	defaultCredentials, err := inventory.ParseDefaults(defaultCreds)
 	if err != nil {
-		log.Error(err, "invalid --default-credentials")
+		log.Error("invalid --default-credentials", "err", err)
 		os.Exit(1)
 	}
 
 	scheme := runtime.NewScheme()
 	for _, add := range []func(*runtime.Scheme) error{clientgoscheme.AddToScheme, bmcv1.AddToScheme, tinkv1.AddToScheme} {
 		if err := add(scheme); err != nil {
-			log.Error(err, "unable to build scheme")
+			log.Error("unable to build scheme", "err", err)
 			os.Exit(1)
 		}
 	}
@@ -113,14 +125,14 @@ func main() {
 		},
 	})
 	if err != nil {
-		log.Error(err, "unable to create manager")
+		log.Error("unable to create manager", "err", err)
 		os.Exit(1)
 	}
 
 	worker := &controller.Worker{
 		Client: mgr.GetClient(),
 		Browser: &mdns.ZeroconfBrowser{
-			Log:          ctrl.Log.WithName("mdns"),
+			Log:          logging.Component(root, "mdns"),
 			ServiceTypes: strings.Split(serviceTypes, ","),
 			Domain:       mdnsDomain,
 			Interval:     browseInterval,
@@ -129,38 +141,38 @@ func main() {
 		},
 		Collector: &inventory.BMCLibCollector{
 			Timeout: collectTimeout,
-			Log:     ctrl.Log.WithName("inventory"),
+			Log:     logging.Component(root, "inventory"),
 		},
 		Syncer: &syncpkg.Syncer{
 			Client:      mgr.GetClient(),
 			Namespace:   namespace,
 			InsecureTLS: insecureTLS,
 			Now:         time.Now,
-			Log:         ctrl.Log.WithName("sync"),
+			Log:         logging.Component(root, "sync"),
 		},
 		CredentialsSecret:  types.NamespacedName{Namespace: namespace, Name: credentialsSecret},
 		DefaultCredentials: defaultCredentials,
 		ResyncInterval:     resyncInterval,
 		RedfishPort:        redfishPort,
-		Log:                ctrl.Log.WithName("worker"),
+		Log:                logging.Component(root, "worker"),
 	}
 	if err := mgr.Add(worker); err != nil {
-		log.Error(err, "unable to add discovery worker")
+		log.Error("unable to add discovery worker", "err", err)
 		os.Exit(1)
 	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
-		log.Error(err, "unable to set up health check")
+		log.Error("unable to set up health check", "err", err)
 		os.Exit(1)
 	}
 	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
-		log.Error(err, "unable to set up ready check")
+		log.Error("unable to set up ready check", "err", err)
 		os.Exit(1)
 	}
 
 	log.Info("starting manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
-		log.Error(err, "manager exited with error")
+		log.Error("manager exited with error", "err", err)
 		os.Exit(1)
 	}
 }

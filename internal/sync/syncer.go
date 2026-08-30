@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/bmc-toolbox/common"
-	"github.com/go-logr/logr"
 	bmcv1 "github.com/tinkerbell/tinkerbell/api/v1alpha1/bmc"
 	tinkv1 "github.com/tinkerbell/tinkerbell/api/v1alpha1/tinkerbell"
 	corev1 "k8s.io/api/core/v1"
@@ -29,7 +29,7 @@ type Syncer struct {
 	Namespace   string
 	InsecureTLS bool
 	Now         func() time.Time
-	Log         logr.Logger
+	Log         *slog.Logger
 }
 
 // Sync upserts the auth Secret, Machine, and Hardware for an endpoint whose
@@ -43,9 +43,11 @@ func (s *Syncer) Sync(ctx context.Context, ep mdns.Endpoint, dev *common.Device,
 	}
 	name := ResourceName(ep)
 	authName := name + "-bmc-auth"
+	s.Log.Debug("syncing resources for verified BMC",
+		"name", name, "instance", ep.Instance, "service", ep.Service, "host", ep.IP.String())
 
 	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: authName, Namespace: s.Namespace}}
-	if err := s.upsert(ctx, secret, ep, func() {
+	if err := s.upsert(ctx, "auth secret", secret, ep, func() {
 		secret.Data = map[string][]byte{
 			"username": []byte(creds.Username),
 			"password": []byte(creds.Password),
@@ -55,7 +57,7 @@ func (s *Syncer) Sync(ctx context.Context, ep mdns.Endpoint, dev *common.Device,
 	}
 
 	machine := &bmcv1.Machine{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: s.Namespace}}
-	if err := s.upsert(ctx, machine, ep, func() {
+	if err := s.upsert(ctx, "machine", machine, ep, func() {
 		machine.Spec = DesiredMachineSpec(ep, s.InsecureTLS, corev1.SecretReference{
 			Name:      authName,
 			Namespace: s.Namespace,
@@ -65,7 +67,7 @@ func (s *Syncer) Sync(ctx context.Context, ep mdns.Endpoint, dev *common.Device,
 	}
 
 	hardware := &tinkv1.Hardware{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: s.Namespace}}
-	if err := s.upsert(ctx, hardware, ep, func() {
+	if err := s.upsert(ctx, "hardware", hardware, ep, func() {
 		hardware.Spec = DesiredHardwareSpec(dev, name)
 	}); err != nil {
 		return fmt.Errorf("syncing hardware %s: %w", name, err)
@@ -76,8 +78,8 @@ func (s *Syncer) Sync(ctx context.Context, ep mdns.Endpoint, dev *common.Device,
 // upsert creates or updates obj, applying mutate plus the discovery labels
 // and annotations. An existing object without the managed-by label is left
 // untouched (logged, nil error).
-func (s *Syncer) upsert(ctx context.Context, obj client.Object, ep mdns.Endpoint, mutate func()) error {
-	_, err := controllerutil.CreateOrUpdate(ctx, s.Client, obj, func() error {
+func (s *Syncer) upsert(ctx context.Context, kind string, obj client.Object, ep mdns.Endpoint, mutate func()) error {
+	op, err := controllerutil.CreateOrUpdate(ctx, s.Client, obj, func() error {
 		// A non-empty resourceVersion means CreateOrUpdate's Get found an
 		// existing object (creationTimestamp is not reliable with fake clients).
 		if obj.GetResourceVersion() != "" && obj.GetLabels()[ManagedByLabel] != ManagedByValue {
@@ -101,10 +103,21 @@ func (s *Syncer) upsert(ctx context.Context, obj client.Object, ep mdns.Endpoint
 		obj.SetAnnotations(annotations)
 		return nil
 	})
-	if errors.Is(err, errUnmanaged) {
-		s.Log.Info("skipping resource not managed by this controller",
-			"kind", fmt.Sprintf("%T", obj), "name", obj.GetName(), "namespace", obj.GetNamespace())
+	log := s.Log.With("kind", kind, "name", obj.GetName(), "namespace", obj.GetNamespace())
+	switch {
+	case errors.Is(err, errUnmanaged):
+		log.Warn("skipping resource not managed by this controller")
 		return nil
+	case err != nil:
+		return err
 	}
-	return err
+	switch op {
+	case controllerutil.OperationResultCreated:
+		log.Info("created resource")
+	case controllerutil.OperationResultUpdated:
+		log.Info("updated resource")
+	default:
+		log.Debug("resource up to date")
+	}
+	return nil
 }

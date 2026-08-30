@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"log/slog"
 	"net/netip"
 	"testing"
 	"time"
@@ -39,6 +40,7 @@ func newTestSyncer(t *testing.T, objs ...client.Object) (*Syncer, client.Client)
 		Namespace:   "tink",
 		InsecureTLS: true,
 		Now:         func() time.Time { return time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC) },
+		Log:         slog.New(slog.DiscardHandler),
 	}, c
 }
 

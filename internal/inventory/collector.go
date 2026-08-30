@@ -4,6 +4,7 @@ package inventory
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"time"
 
@@ -29,16 +30,16 @@ type Collector interface {
 // BMCLibCollector collects inventory using bmclib's Redfish (gofish) provider.
 type BMCLibCollector struct {
 	Timeout time.Duration
-	Log     logr.Logger
+	Log     *slog.Logger
 }
 
 // newBMCClient builds a bmclib client for a discovered endpoint: Redfish
 // (gofish) preferred, the exec-based ipmitool driver removed — the container
 // image ships no ipmitool binary; IPMI fallback uses the pure-go "ipmi"
 // (go-ipmi) provider instead.
-func newBMCClient(ep mdns.Endpoint, creds Credentials, log logr.Logger) *bmclib.Client {
+func newBMCClient(ep mdns.Endpoint, creds Credentials, log *slog.Logger) *bmclib.Client {
 	client := bmclib.NewClient(ep.IP.String(), creds.Username, creds.Password,
-		bmclib.WithLogger(log.WithValues("host", ep.IP.String())),
+		bmclib.WithLogger(logr.FromSlogHandler(log.With("host", ep.IP.String()).Handler())),
 		bmclib.WithRedfishPort(strconv.Itoa(ep.Port)),
 		bmclib.WithRedfishUseBasicAuth(true),
 	)
@@ -55,19 +56,28 @@ func newBMCClient(ep mdns.Endpoint, creds Credentials, log logr.Logger) *bmclib.
 
 // Collect opens a Redfish session to the endpoint and returns its inventory.
 func (c *BMCLibCollector) Collect(ctx context.Context, ep mdns.Endpoint, creds Credentials) (*common.Device, error) {
+	log := c.Log.With("host", ep.IP.String(), "port", ep.Port, "instance", ep.Instance)
 	client := newBMCClient(ep, creds, c.Log)
 
 	ctx, cancel := context.WithTimeout(ctx, c.Timeout)
 	defer cancel()
 
+	log.Debug("opening BMC connection", "username", creds.Username, "timeout", c.Timeout.String())
 	if err := client.Open(ctx); err != nil {
+		md := client.GetMetadata()
+		log.Debug("BMC connection failed", "providersAttempted", md.ProvidersAttempted, "err", err)
 		return nil, fmt.Errorf("opening BMC connection to %s: %w", ep.IP, err)
 	}
 	defer client.Close(ctx)
+	md := client.GetMetadata()
+	log.Info("BMC connection established", "provider", md.SuccessfulOpenConns)
 
 	dev, err := client.Inventory(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("collecting inventory from %s: %w", ep.IP, err)
 	}
+	log.Info("inventory collected",
+		"vendor", dev.Vendor, "model", dev.Model, "serial", dev.Serial,
+		"nics", len(dev.NICs), "drives", len(dev.Drives), "cpus", len(dev.CPUs))
 	return dev, nil
 }

@@ -1,10 +1,9 @@
 package inventory
 
 import (
+	"log/slog"
 	"net/netip"
 	"testing"
-
-	"github.com/go-logr/logr"
 
 	"github.com/tinkerbell-community/tinkerbell-bmc-discovery-controller/internal/mdns"
 )
@@ -16,7 +15,7 @@ func TestNewBMCClientDrivers(t *testing.T) {
 		IP:       netip.MustParseAddr("10.0.80.1"),
 		Port:     443,
 	}
-	client := newBMCClient(ep, Credentials{Username: "admin", Password: "pw"}, logr.Discard())
+	client := newBMCClient(ep, Credentials{Username: "admin", Password: "pw"}, slog.New(slog.DiscardHandler))
 
 	var names []string
 	for _, driver := range client.Registry.Drivers {

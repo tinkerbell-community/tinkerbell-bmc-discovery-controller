@@ -132,6 +132,8 @@ link-local or ULA addresses unreachable from the cluster).
 | `--credentials-secret` | `credentials.name` | `bmc-discovery-credentials` | Secret with `username`/`password` |
 | `--default-credentials` | `credentials.defaults` | `_obmc_console._tcp=root:0penBmc` | Per-service fallbacks when the Secret is absent |
 | `--redfish-port` | `discovery.redfishPort` | `0` (advertised port) | Redfish port override for non-Redfish advertisements |
+| `--log-level` | `logLevel` | `info` | `debug` logs every discovery/verification step |
+| `--log-format` | `logFormat` | `json` | `json` or `text` (slog) |
 | `--insecure-tls` | `insecureTLS` | `true` | Skip BMC TLS verification |
 | `--leader-elect` | `leaderElection` | `false` (chart: `true`) | Leader election |
 

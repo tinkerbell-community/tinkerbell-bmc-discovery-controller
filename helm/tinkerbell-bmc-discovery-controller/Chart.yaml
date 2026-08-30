@@ -2,8 +2,8 @@ apiVersion: v2
 name: tinkerbell-bmc-discovery-controller
 description: Discovers BMCs via mDNS and manages Tinkerbell BMC Machine and Hardware resources from their Redfish inventory.
 type: application
-version: 0.1.6
-appVersion: "0.1.6"
+version: 0.1.7
+appVersion: "0.1.7"
 home: https://github.com/tinkerbell-community/tinkerbell-bmc-discovery-controller
 sources:
   - https://github.com/tinkerbell-community/tinkerbell-bmc-discovery-controller
