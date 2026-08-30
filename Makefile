@@ -7,7 +7,7 @@ build:
 
 .PHONY: test
 test:
-	go test -race -coverprofile=cover.out ./...
+	CGO_ENABLED=1 go test -race -coverprofile=cover.out ./...
 
 .PHONY: vet
 vet:
