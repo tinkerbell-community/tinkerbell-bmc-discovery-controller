@@ -7,6 +7,10 @@ metadata:
     {{- include "bmc-discovery.labels" . | nindent 4 }}
 spec:
   replicas: 1
+  # hostNetwork pods pin host ports, so a rolling update deadlocks when no
+  # other node can host the new pod; recreate the single replica instead.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       {{- include "bmc-discovery.selectorLabels" . | nindent 6 }}
