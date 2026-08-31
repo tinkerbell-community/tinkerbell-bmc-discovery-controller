@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bmc-toolbox/common"
+
 	"github.com/tinkerbell-community/tinkerbell-bmc-discovery-controller/internal/mdns"
 )
 
@@ -25,6 +27,43 @@ func TestSanitizeName(t *testing.T) {
 		if got := SanitizeName(tt.in); got != tt.want {
 			t.Errorf("SanitizeName(%q) = %q, want %q", tt.in, got, tt.want)
 		}
+	}
+}
+
+func TestTemplateName(t *testing.T) {
+	ep := mdns.Endpoint{
+		Instance: "obmc_console on x570d4i2t",
+		Hostname: "x570d4i2t.local.",
+		IP:       netip.MustParseAddr("10.0.80.1"),
+	}
+	dev := testDevice() // primary MAC aa:bb:cc:dd:ee:01, serial SN12345
+
+	tests := []struct {
+		name string
+		tmpl string
+		want string
+	}{
+		{"cluster-mac", "talos-${mac}", "talos-aabbccddee01"},
+		{"mac with dashes", "talos-${mac_dashes}", "talos-aa-bb-cc-dd-ee-01"},
+		{"hostname", "${hostname}-bmc", "x570d4i2t-bmc"},
+		{"serial", "node-${serial}", "node-sn12345"},
+		{"ip", "bmc-${ip}", "bmc-10-0-80-1"},
+		{"empty template", "", ""},
+		{"unknown variable", "x-${nope}", ""},
+		{"literal only", "static-name", "static-name"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := TemplateName(tt.tmpl, ep, dev); got != tt.want {
+				t.Errorf("TemplateName(%q) = %q, want %q", tt.tmpl, got, tt.want)
+			}
+		})
+	}
+
+	// A template referencing the MAC of a device without NICs is unresolvable.
+	empty := common.NewDevice()
+	if got := TemplateName("talos-${mac}", ep, &empty); got != "" {
+		t.Errorf("TemplateName with no MAC = %q, want empty (fallback)", got)
 	}
 }
 

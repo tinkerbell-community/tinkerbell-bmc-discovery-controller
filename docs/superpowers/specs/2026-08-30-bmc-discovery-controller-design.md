@@ -99,7 +99,18 @@ A single Go binary built on `sigs.k8s.io/controller-runtime`:
 
 ### Naming
 
-Resource name: the sanitized (RFC 1123) first label of the mDNS hostname
+Revised 2026-08-31: an optional `--name-template` (e.g. `talos-${mac}`)
+renders the resource name from endpoint + verified inventory (variables:
+mac, mac_dashes, hostname, instance, serial, ip; result sanitized).
+Unresolvable endpoints fall back to the default below. Hardware mapping was
+also aligned with the environment's hand-provisioned convention: agentID and
+metadata.instance.id = primary MAC (serial only without MACs),
+netboot-enabled interfaces with the DHCP hostname on the primary,
+facility_code and auto enrollment configurable, bmcRef.apiGroup
+`bmc.tinkerbell.org/v1alpha1`, and a gofish Systems/EthernetInterfaces
+fallback fills NIC MACs when bmclib inventory has none.
+
+Default resource name: the sanitized (RFC 1123) first label of the mDNS hostname
 (e.g. `x570d4i2t.local.` → `x570d4i2t`), falling back to the instance name,
 then the IP. Hostnames are unique on the link, known before inventory
 succeeds, and — unlike instance names — identical across every service type a

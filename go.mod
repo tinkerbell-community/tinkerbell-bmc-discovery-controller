@@ -8,6 +8,7 @@ require (
 	github.com/go-logr/logr v1.4.4
 	github.com/jacobweinstock/registrar v0.4.7
 	github.com/libp2p/zeroconf/v2 v2.2.0
+	github.com/stmcginnis/gofish v0.22.0
 	github.com/tinkerbell/tinkerbell/api v0.25.0
 	k8s.io/api v0.37.0
 	k8s.io/apimachinery v0.37.0
@@ -73,7 +74,6 @@ require (
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	github.com/satori/go.uuid v1.2.0 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
-	github.com/stmcginnis/gofish v0.22.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	go.opentelemetry.io/otel v1.41.0 // indirect
 	go.opentelemetry.io/otel/trace v1.41.0 // indirect

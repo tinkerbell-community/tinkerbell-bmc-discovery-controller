@@ -46,10 +46,27 @@ types.
    - a `Hardware` populated from the collected inventory.
 4. Everything re-syncs periodically; unverifiable BMCs retry with backoff.
 
-Resource names derive from the sanitized first label of the mDNS hostname
-(e.g. `x570d4i2t.local` → `x570d4i2t`), so they are stable across restarts,
-identical for every service type a BMC advertises, and available before
-inventory collection succeeds.
+Resource names default to the sanitized first label of the mDNS hostname
+(e.g. `x570d4i2t.local` → `x570d4i2t`) — stable across restarts and identical
+for every service type a BMC advertises. A name template can override this:
+
+```yaml
+naming:
+  template: talos-${mac}   # -> talos-d83addc98c28
+```
+
+Variables: `${mac}` (primary in-band MAC, colons removed), `${mac_dashes}`,
+`${hostname}`, `${instance}`, `${serial}`, `${ip}`. An endpoint whose
+inventory cannot resolve the template (e.g. its Redfish reports no host
+MACs) falls back to the hostname-derived name with a warning.
+
+Hardware specs follow the conventions of hand-provisioned Tinkerbell
+hardware: `agentID` and `metadata.instance.id` are the primary in-band MAC
+(serial only when no MAC is known), every interface is netboot-enabled
+(`allowPXE`/`allowWorkflow`), the primary interface carries the DHCP
+hostname, and `metadata.facility.facility_code` and auto enrollment are
+configurable. When bmclib's inventory yields no host NICs the collector
+additionally queries Redfish `Systems/EthernetInterfaces` directly for MACs.
 
 ### Discovering BMCs that only advertise a console service
 
@@ -135,6 +152,9 @@ link-local or ULA addresses unreachable from the cluster).
 | `--credentials-secret` | `credentials.name` | `bmc-discovery-credentials` | Secret with `username`/`password` |
 | `--default-credentials` | `credentials.defaults` | `*=admin:admin,_obmc_*=root:0penBmc` | Known defaults tried after the Secret (pivoting) |
 | `--redfish-port` | `discovery.redfishPort` | `0` (advertised port) | Redfish port override for non-Redfish advertisements |
+| `--name-template` | `naming.template` | `""` (mDNS hostname) | Resource name template, e.g. `talos-${mac}` |
+| `--facility-code` | `hardware.facilityCode` | `onprem` | `metadata.facility.facility_code` on Hardware |
+| `--auto-enrollment` | `hardware.autoEnrollment` | `false` (chart: `true`) | `spec.auto.enrollmentEnabled` on Hardware |
 | `--log-level` | `logLevel` | `info` | `debug` logs every discovery/verification step |
 | `--log-format` | `logFormat` | `json` | `json` or `text` (slog) |
 | `--insecure-tls` | `insecureTLS` | `true` | Skip BMC TLS verification |

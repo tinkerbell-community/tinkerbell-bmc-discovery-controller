@@ -50,28 +50,58 @@ func DesiredMachineSpec(ep mdns.Endpoint, insecureTLS bool, authRef corev1.Secre
 	}
 }
 
+// HardwareOptions parameterize the Hardware spec built from inventory.
+type HardwareOptions struct {
+	// Name is the resource name, shared by the linked Machine; it becomes
+	// the instance and DHCP hostname.
+	Name string
+	// FacilityCode fills metadata.facility.facility_code when non-empty.
+	FacilityCode string
+	// AutoEnrollment enables Tinkerbell auto enrollment for the Hardware.
+	AutoEnrollment bool
+}
+
 // DesiredHardwareSpec builds the tinkerbell.org Hardware spec from BMC
-// inventory. bmcName is the Machine resource linked via spec.bmcRef.
-func DesiredHardwareSpec(dev *common.Device, bmcName string) tinkv1.HardwareSpec {
+// inventory, following the conventions of hand-provisioned Hardware:
+// agentID and metadata.instance.id are the primary in-band MAC (serial only
+// when no MAC is known), every interface is netboot-enabled, and the primary
+// interface carries the DHCP hostname.
+func DesiredHardwareSpec(dev *common.Device, opts HardwareOptions) tinkv1.HardwareSpec {
+	instanceID := PrimaryMAC(dev)
+	if instanceID == "" {
+		instanceID = dev.Serial
+	}
 	spec := tinkv1.HardwareSpec{
 		AgentID: PrimaryMAC(dev),
+		Auto:    tinkv1.AutoCapabilities{EnrollmentEnabled: opts.AutoEnrollment},
 		BMCRef: &corev1.TypedLocalObjectReference{
-			APIGroup: ptr.To("bmc.tinkerbell.org"),
+			APIGroup: ptr.To("bmc.tinkerbell.org/v1alpha1"),
 			Kind:     "Machine",
-			Name:     bmcName,
+			Name:     opts.Name,
 		},
 		Metadata: &tinkv1.HardwareMetadata{
 			Manufacturer: &tinkv1.MetadataManufacturer{Slug: SanitizeName(dev.Vendor)},
 			Instance: &tinkv1.MetadataInstance{
-				ID:       dev.Serial,
-				Hostname: bmcName,
+				ID:       instanceID,
+				Hostname: opts.Name,
 			},
 		},
 	}
-	for _, mac := range inbandMACs(dev) {
-		spec.Interfaces = append(spec.Interfaces, tinkv1.Interface{
+	if opts.FacilityCode != "" {
+		spec.Metadata.Facility = &tinkv1.MetadataFacility{FacilityCode: opts.FacilityCode}
+	}
+	for i, mac := range inbandMACs(dev) {
+		iface := tinkv1.Interface{
+			Netboot: &tinkv1.Netboot{
+				AllowPXE:      ptr.To(true),
+				AllowWorkflow: ptr.To(true),
+			},
 			DHCP: &tinkv1.DHCP{MAC: mac},
-		})
+		}
+		if i == 0 {
+			iface.DHCP.Hostname = opts.Name
+		}
+		spec.Interfaces = append(spec.Interfaces, iface)
 	}
 	for _, drive := range dev.Drives {
 		if drive != nil && drive.LogicalName != "" {

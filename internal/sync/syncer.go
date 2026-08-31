@@ -28,8 +28,16 @@ type Syncer struct {
 	Client      client.Client
 	Namespace   string
 	InsecureTLS bool
-	Now         func() time.Time
-	Log         *slog.Logger
+	// NameTemplate, when set (e.g. "talos-${mac}"), names resources via
+	// TemplateName; endpoints whose inventory cannot resolve it fall back
+	// to the mDNS-derived ResourceName.
+	NameTemplate string
+	// FacilityCode fills metadata.facility.facility_code on Hardware.
+	FacilityCode string
+	// AutoEnrollment enables Tinkerbell auto enrollment on Hardware.
+	AutoEnrollment bool
+	Now            func() time.Time
+	Log            *slog.Logger
 }
 
 // Sync upserts the auth Secret, Machine, and Hardware for an endpoint whose
@@ -41,7 +49,14 @@ func (s *Syncer) Sync(ctx context.Context, ep mdns.Endpoint, dev *common.Device,
 	if dev == nil {
 		return errors.New("refusing to sync without verified inventory")
 	}
-	name := ResourceName(ep)
+	name := TemplateName(s.NameTemplate, ep, dev)
+	if name == "" {
+		name = ResourceName(ep)
+		if s.NameTemplate != "" {
+			s.Log.Warn("name template unresolvable for endpoint; using mDNS-derived name",
+				"template", s.NameTemplate, "name", name, "instance", ep.Instance)
+		}
+	}
 	authName := name + "-bmc-auth"
 	s.Log.Debug("syncing resources for verified BMC",
 		"name", name, "instance", ep.Instance, "service", ep.Service, "host", ep.IP.String())
@@ -68,7 +83,11 @@ func (s *Syncer) Sync(ctx context.Context, ep mdns.Endpoint, dev *common.Device,
 
 	hardware := &tinkv1.Hardware{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: s.Namespace}}
 	if err := s.upsert(ctx, "hardware", hardware, ep, func() {
-		hardware.Spec = DesiredHardwareSpec(dev, name)
+		hardware.Spec = DesiredHardwareSpec(dev, HardwareOptions{
+			Name:           name,
+			FacilityCode:   s.FacilityCode,
+			AutoEnrollment: s.AutoEnrollment,
+		})
 	}); err != nil {
 		return fmt.Errorf("syncing hardware %s: %w", name, err)
 	}

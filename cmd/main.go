@@ -60,6 +60,9 @@ func main() {
 		collectTimeout    time.Duration
 		credentialsSecret string
 		defaultCreds      string
+		nameTemplate      string
+		facilityCode      string
+		autoEnrollment    bool
 		redfishPort       int
 		insecureTLS       bool
 		leaderElect       bool
@@ -78,6 +81,9 @@ func main() {
 	flag.DurationVar(&collectTimeout, "collect-timeout", 2*time.Minute, "Timeout for one inventory collection.")
 	flag.StringVar(&credentialsSecret, "credentials-secret", "bmc-discovery-credentials", "Name of the Secret holding BMC username/password keys.")
 	flag.StringVar(&defaultCreds, "default-credentials", "*=admin:admin,_obmc_console._tcp=root:0penBmc,_obmc_redfish._tcp=root:0penBmc", "Known default credentials (<service>=<user>:<pass>, comma-separated; * is the catch-all) tried after the credentials secret until one authenticates. Empty disables defaults.")
+	flag.StringVar(&nameTemplate, "name-template", "", "Resource name template, e.g. talos-${mac}. Variables: ${mac} (primary MAC, colons removed), ${mac_dashes}, ${hostname}, ${instance}, ${serial}, ${ip}. Empty uses the mDNS hostname; unresolvable endpoints fall back to it.")
+	flag.StringVar(&facilityCode, "facility-code", "onprem", "metadata.facility.facility_code set on created Hardware; empty omits it.")
+	flag.BoolVar(&autoEnrollment, "auto-enrollment", false, "Enable Tinkerbell auto enrollment (spec.auto.enrollmentEnabled) on created Hardware.")
 	flag.IntVar(&redfishPort, "redfish-port", 0, "Redfish port override; 0 uses the mDNS-advertised port. Set (usually to 443) when browsing non-Redfish service types like _obmc_console._tcp.")
 	flag.BoolVar(&insecureTLS, "insecure-tls", true, "Skip BMC TLS verification (BMCs commonly use self-signed certificates).")
 	flag.BoolVar(&leaderElect, "leader-elect", false, "Enable leader election.")
@@ -144,11 +150,14 @@ func main() {
 			Log:     logging.Component(root, "inventory"),
 		},
 		Syncer: &syncpkg.Syncer{
-			Client:      mgr.GetClient(),
-			Namespace:   namespace,
-			InsecureTLS: insecureTLS,
-			Now:         time.Now,
-			Log:         logging.Component(root, "sync"),
+			Client:         mgr.GetClient(),
+			Namespace:      namespace,
+			InsecureTLS:    insecureTLS,
+			NameTemplate:   nameTemplate,
+			FacilityCode:   facilityCode,
+			AutoEnrollment: autoEnrollment,
+			Now:            time.Now,
+			Log:            logging.Component(root, "sync"),
 		},
 		CredentialsSecret:  types.NamespacedName{Namespace: namespace, Name: credentialsSecret},
 		DefaultCredentials: defaultCredentials,

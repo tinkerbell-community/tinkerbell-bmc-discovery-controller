@@ -82,32 +82,73 @@ func TestPrimaryMAC(t *testing.T) {
 }
 
 func TestDesiredHardwareSpec(t *testing.T) {
-	spec := DesiredHardwareSpec(testDevice(), "x570d4i-2t")
+	spec := DesiredHardwareSpec(testDevice(), HardwareOptions{
+		Name:           "talos-aabbccddee01",
+		FacilityCode:   "onprem",
+		AutoEnrollment: true,
+	})
 
+	// agentID and metadata.instance.id are the primary in-band MAC, matching
+	// the convention of hand-provisioned Hardware in this environment.
 	if spec.AgentID != "aa:bb:cc:dd:ee:01" {
 		t.Errorf("AgentID = %q, want aa:bb:cc:dd:ee:01", spec.AgentID)
 	}
+	if !spec.Auto.EnrollmentEnabled {
+		t.Error("Auto.EnrollmentEnabled = false, want true")
+	}
+
 	if len(spec.Interfaces) != 2 {
 		t.Fatalf("Interfaces count = %d, want 2 (deduped, invalid skipped)", len(spec.Interfaces))
 	}
-	if spec.Interfaces[0].DHCP == nil || spec.Interfaces[0].DHCP.MAC != "aa:bb:cc:dd:ee:01" {
-		t.Errorf("Interfaces[0] = %+v, want DHCP MAC aa:bb:cc:dd:ee:01", spec.Interfaces[0])
+	first := spec.Interfaces[0]
+	if first.DHCP == nil || first.DHCP.MAC != "aa:bb:cc:dd:ee:01" {
+		t.Errorf("Interfaces[0] = %+v, want DHCP MAC aa:bb:cc:dd:ee:01", first)
 	}
-	if spec.Interfaces[1].DHCP == nil || spec.Interfaces[1].DHCP.MAC != "aa:bb:cc:dd:ee:02" {
-		t.Errorf("Interfaces[1] = %+v, want DHCP MAC aa:bb:cc:dd:ee:02", spec.Interfaces[1])
+	if first.DHCP.Hostname != "talos-aabbccddee01" {
+		t.Errorf("Interfaces[0].DHCP.Hostname = %q, want the resource name", first.DHCP.Hostname)
 	}
+	if first.Netboot == nil || first.Netboot.AllowPXE == nil || !*first.Netboot.AllowPXE ||
+		first.Netboot.AllowWorkflow == nil || !*first.Netboot.AllowWorkflow {
+		t.Errorf("Interfaces[0].Netboot = %+v, want allowPXE and allowWorkflow true", first.Netboot)
+	}
+	second := spec.Interfaces[1]
+	if second.DHCP == nil || second.DHCP.MAC != "aa:bb:cc:dd:ee:02" || second.DHCP.Hostname != "" {
+		t.Errorf("Interfaces[1] = %+v, want MAC aa:bb:cc:dd:ee:02 and no hostname", second)
+	}
+
 	if len(spec.Disks) != 1 || spec.Disks[0].Device != "/dev/nvme0n1" {
 		t.Errorf("Disks = %+v, want one /dev/nvme0n1", spec.Disks)
 	}
+
 	md := spec.Metadata
 	if md == nil || md.Manufacturer == nil || md.Manufacturer.Slug != "asrockrack" {
 		t.Fatalf("Metadata.Manufacturer = %+v, want slug asrockrack", md)
 	}
-	if md.Instance == nil || md.Instance.ID != "SN12345" || md.Instance.Hostname != "x570d4i-2t" {
-		t.Errorf("Metadata.Instance = %+v, want ID SN12345 Hostname x570d4i-2t", md.Instance)
+	if md.Instance == nil || md.Instance.ID != "aa:bb:cc:dd:ee:01" || md.Instance.Hostname != "talos-aabbccddee01" {
+		t.Errorf("Metadata.Instance = %+v, want ID aa:bb:cc:dd:ee:01 Hostname talos-aabbccddee01", md.Instance)
 	}
+	if md.Facility == nil || md.Facility.FacilityCode != "onprem" {
+		t.Errorf("Metadata.Facility = %+v, want facility_code onprem", md.Facility)
+	}
+
 	ref := spec.BMCRef
-	if ref == nil || ref.APIGroup == nil || *ref.APIGroup != "bmc.tinkerbell.org" || ref.Kind != "Machine" || ref.Name != "x570d4i-2t" {
-		t.Errorf("BMCRef = %+v, want bmc.tinkerbell.org/Machine x570d4i-2t", ref)
+	if ref == nil || ref.APIGroup == nil || *ref.APIGroup != "bmc.tinkerbell.org/v1alpha1" || ref.Kind != "Machine" || ref.Name != "talos-aabbccddee01" {
+		t.Errorf("BMCRef = %+v, want bmc.tinkerbell.org/v1alpha1 Machine talos-aabbccddee01", ref)
+	}
+}
+
+func TestDesiredHardwareSpecNoMACFallsBackToSerial(t *testing.T) {
+	dev := common.NewDevice()
+	dev.Serial = "SN99"
+	spec := DesiredHardwareSpec(&dev, HardwareOptions{Name: "x570d4i2t"})
+
+	if spec.AgentID != "" {
+		t.Errorf("AgentID = %q, want empty without MACs", spec.AgentID)
+	}
+	if spec.Metadata == nil || spec.Metadata.Instance == nil || spec.Metadata.Instance.ID != "SN99" {
+		t.Errorf("Instance = %+v, want ID SN99 (serial fallback)", spec.Metadata)
+	}
+	if spec.Metadata.Facility != nil {
+		t.Errorf("Facility = %+v, want nil when no facility code configured", spec.Metadata.Facility)
 	}
 }

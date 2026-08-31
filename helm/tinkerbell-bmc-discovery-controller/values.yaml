@@ -44,6 +44,20 @@ credentials:
       username: root
       password: 0penBmc
 
+naming:
+  # Optional resource-name template, e.g. "talos-${mac}". Variables:
+  # ${mac} (primary in-band MAC, colons removed), ${mac_dashes} (colons as
+  # dashes), ${hostname} (first mDNS hostname label), ${instance},
+  # ${serial}, ${ip}. Endpoints whose inventory cannot resolve the template
+  # (e.g. no MAC reported) fall back to the mDNS hostname-derived name.
+  template: ""
+
+hardware:
+  # metadata.facility.facility_code on created Hardware ("" omits it).
+  facilityCode: onprem
+  # spec.auto.enrollmentEnabled on created Hardware.
+  autoEnrollment: true
+
 # Skip BMC TLS verification (BMCs commonly serve self-signed certificates).
 insecureTLS: true
 

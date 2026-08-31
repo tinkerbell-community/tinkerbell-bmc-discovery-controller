@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bmc-toolbox/common"
+
 	bmcv1 "github.com/tinkerbell/tinkerbell/api/v1alpha1/bmc"
 	tinkv1 "github.com/tinkerbell/tinkerbell/api/v1alpha1/tinkerbell"
 	corev1 "k8s.io/api/core/v1"
@@ -88,6 +90,48 @@ func TestSyncCreatesAll(t *testing.T) {
 	}
 	if hw.Spec.AgentID != "aa:bb:cc:dd:ee:01" || hw.Spec.BMCRef == nil || hw.Spec.BMCRef.Name != "x570d4i-2t" {
 		t.Errorf("hardware spec = %+v", hw.Spec)
+	}
+}
+
+func TestSyncNameTemplate(t *testing.T) {
+	s, c := newTestSyncer(t)
+	s.NameTemplate = "talos-${mac}"
+	ctx := context.Background()
+
+	if err := s.Sync(ctx, testEndpoint(), testDevice(), testCreds); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+
+	var machine bmcv1.Machine
+	if err := c.Get(ctx, types.NamespacedName{Namespace: "tink", Name: "talos-aabbccddee01"}, &machine); err != nil {
+		t.Fatalf("templated machine name: %v", err)
+	}
+	var hw tinkv1.Hardware
+	if err := c.Get(ctx, types.NamespacedName{Namespace: "tink", Name: "talos-aabbccddee01"}, &hw); err != nil {
+		t.Fatalf("templated hardware name: %v", err)
+	}
+	var secret corev1.Secret
+	if err := c.Get(ctx, types.NamespacedName{Namespace: "tink", Name: "talos-aabbccddee01-bmc-auth"}, &secret); err != nil {
+		t.Fatalf("templated auth secret name: %v", err)
+	}
+}
+
+func TestSyncNameTemplateFallsBack(t *testing.T) {
+	// A device without MACs cannot resolve ${mac}; the hostname-derived name
+	// is used instead so the BMC is still managed.
+	s, c := newTestSyncer(t)
+	s.NameTemplate = "talos-${mac}"
+	ctx := context.Background()
+
+	dev := common.NewDevice()
+	dev.Serial = "SN99"
+	if err := s.Sync(ctx, testEndpoint(), &dev, testCreds); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+
+	var machine bmcv1.Machine
+	if err := c.Get(ctx, types.NamespacedName{Namespace: "tink", Name: "x570d4i-2t"}, &machine); err != nil {
+		t.Fatalf("fallback machine name: %v", err)
 	}
 }
 

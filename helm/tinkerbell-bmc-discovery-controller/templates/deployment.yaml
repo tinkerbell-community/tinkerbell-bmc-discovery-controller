@@ -50,6 +50,11 @@ spec:
             {{- end }}
             - --default-credentials={{ join "," $defaults }}
             - --redfish-port={{ .Values.discovery.redfishPort }}
+            {{- with .Values.naming.template }}
+            - --name-template={{ . }}
+            {{- end }}
+            - --facility-code={{ .Values.hardware.facilityCode }}
+            - --auto-enrollment={{ .Values.hardware.autoEnrollment }}
             {{- if .Values.networking.multus.enabled }}
             - --mdns-interfaces={{ .Values.networking.multus.interface }}
             {{- end }}
