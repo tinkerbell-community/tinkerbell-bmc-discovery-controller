@@ -27,12 +27,20 @@ credentials:
   create: false
   username: ""
   password: ""
-  # Fallback credentials keyed by DNS-SD service type, used only when the
-  # Secret above does not exist. OpenBMC ships with root/0penBmc from the
-  # factory. These are well-known vendor defaults, not secrets — anything
-  # sensitive belongs in the Secret, which always wins when present.
+  # Known default credentials keyed by DNS-SD service type, with "*" as the
+  # catch-all. The controller tries the Secret above first (when present),
+  # then the matching service default, then "*", pivoting until one pair
+  # authenticates against the BMC. Add entries for the vendor defaults known
+  # in your environment. These are well-known vendor defaults, not secrets —
+  # anything sensitive belongs in the Secret.
   defaults:
+    "*":
+      username: admin
+      password: admin
     _obmc_console._tcp:
+      username: root
+      password: 0penBmc
+    _obmc_redfish._tcp:
       username: root
       password: 0penBmc
 

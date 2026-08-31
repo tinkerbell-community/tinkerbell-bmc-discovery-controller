@@ -32,11 +32,14 @@ types.
 1. The browser continuously browses configurable DNS-SD service types.
    OpenBMC advertises `_obmc_redfish._tcp` via Avahi; standard Redfish
    services advertise `_redfish._tcp`.
-2. For each discovered endpoint the worker resolves credentials — the shared
-   BMC credentials Secret when it exists, else the per-service-type defaults
-   (OpenBMC ships `root`/`0penBmc`, preconfigured for `_obmc_console._tcp`) —
-   and **verifies the connection** by authenticating and collecting inventory
-   over Redfish. Nothing is created for a BMC that cannot be verified.
+2. For each discovered endpoint the worker builds an ordered credential
+   chain — the shared BMC credentials Secret (when present), then the
+   service-type default (OpenBMC ships `root`/`0penBmc`, preconfigured for
+   `_obmc_console._tcp` and `_obmc_redfish._tcp`), then the `*` catch-all
+   (`admin`/`admin`) — and **pivots through it, verifying the connection** by
+   authenticating and collecting inventory over Redfish until one pair
+   works. Nothing is created for a BMC that cannot be verified; the
+   per-machine auth Secret records the pair that authenticated.
 3. Once verified, it upserts:
    - a per-machine auth Secret `<name>-bmc-auth` (username/password),
    - a `Machine` pointing at the BMC,
@@ -130,7 +133,7 @@ link-local or ULA addresses unreachable from the cluster).
 | `--resync-interval` | `discovery.resyncInterval` | `1h` | Inventory refresh for known BMCs |
 | `--collect-timeout` | `discovery.collectTimeout` | `2m` | Timeout per inventory collection |
 | `--credentials-secret` | `credentials.name` | `bmc-discovery-credentials` | Secret with `username`/`password` |
-| `--default-credentials` | `credentials.defaults` | `_obmc_console._tcp=root:0penBmc` | Per-service fallbacks when the Secret is absent |
+| `--default-credentials` | `credentials.defaults` | `*=admin:admin,_obmc_*=root:0penBmc` | Known defaults tried after the Secret (pivoting) |
 | `--redfish-port` | `discovery.redfishPort` | `0` (advertised port) | Redfish port override for non-Redfish advertisements |
 | `--log-level` | `logLevel` | `info` | `debug` logs every discovery/verification step |
 | `--log-format` | `logFormat` | `json` | `json` or `text` (slog) |

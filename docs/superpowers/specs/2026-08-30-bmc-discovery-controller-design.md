@@ -139,9 +139,13 @@ advertised port (2200, the SOL console) is not the Redfish port.
   verified by a successful authenticated inventory collection. (Revised
   2026-08-30: originally a connection-only Machine was created from mDNS
   data alone; connection verification is now required first.)
-- Credentials: the shared Secret wins when present; when it does not exist,
-  per-service-type defaults apply (`--default-credentials`, preconfigured
-  with OpenBMC's factory `root`/`0penBmc` for `_obmc_console._tcp`).
+- Credentials: an ordered candidate chain, pivoted through until one pair
+  authenticates — the shared Secret first (when present and well-formed),
+  then the service-type default, then the `*` catch-all
+  (`--default-credentials`, preconfigured `*=admin:admin` plus OpenBMC's
+  factory `root`/`0penBmc` for `_obmc_console._tcp`/`_obmc_redfish._tcp`).
+  The per-machine auth Secret records whichever pair worked. (Revised
+  2026-08-30 from Secret-else-single-default.)
 - Upsert conflict: standard retry-on-conflict via CreateOrUpdate requeue.
 - mDNS browse failure: logged, next cycle retries; browse failures never
   crash the manager.

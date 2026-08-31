@@ -44,9 +44,15 @@ func (b *fakeBrowser) Run(ctx context.Context, events chan<- mdns.Endpoint) erro
 type fakeCollector struct {
 	dev *common.Device
 	err error
+	// accept, when set, simulates BMC authentication: Collect succeeds only
+	// for these exact credentials and fails for any others.
+	accept *inventory.Credentials
 }
 
-func (c *fakeCollector) Collect(context.Context, mdns.Endpoint, inventory.Credentials) (*common.Device, error) {
+func (c *fakeCollector) Collect(_ context.Context, _ mdns.Endpoint, creds inventory.Credentials) (*common.Device, error) {
+	if c.accept != nil && creds != *c.accept {
+		return nil, errors.New("authentication failed")
+	}
 	return c.dev, c.err
 }
 
@@ -225,6 +231,92 @@ func TestWorkerRedfishPortOverride(t *testing.T) {
 	}
 	if opts := machine.Spec.Connection.ProviderOptions; opts == nil || opts.Redfish == nil || opts.Redfish.Port != 443 {
 		t.Errorf("redfish provider port not overridden: %+v", opts)
+	}
+}
+
+func TestWorkerGlobalDefaultCredentials(t *testing.T) {
+	// With no secret and no service-specific default, the wildcard default
+	// applies to any service type.
+	dev := common.NewDevice()
+	w, c := newWorker(t,
+		&fakeBrowser{endpoints: []mdns.Endpoint{testEndpoint()}},
+		&fakeCollector{dev: &dev, accept: &inventory.Credentials{Username: "admin", Password: "admin"}},
+	)
+	w.DefaultCredentials = map[string]inventory.Credentials{
+		inventory.WildcardService: {Username: "admin", Password: "admin"},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = w.Start(ctx) }()
+
+	if !eventually(t, func() bool {
+		var machine bmcv1.Machine
+		return c.Get(ctx, types.NamespacedName{Namespace: "tink", Name: "x570d4i-2t"}, &machine) == nil
+	}) {
+		t.Fatal("machine was not created with the global default credentials")
+	}
+	var secret corev1.Secret
+	if err := c.Get(ctx, types.NamespacedName{Namespace: "tink", Name: "x570d4i-2t-bmc-auth"}, &secret); err != nil {
+		t.Fatal(err)
+	}
+	if string(secret.Data["username"]) != "admin" || string(secret.Data["password"]) != "admin" {
+		t.Errorf("auth secret data = %v, want admin/admin", secret.Data)
+	}
+}
+
+func TestWorkerPivotsToDefaultWhenSecretCredsFail(t *testing.T) {
+	// The secret's credentials are tried first; when the BMC rejects them,
+	// the worker pivots to the known defaults, and the per-machine auth
+	// secret records the pair that actually worked.
+	dev := common.NewDevice()
+	w, c := newWorker(t,
+		&fakeBrowser{endpoints: []mdns.Endpoint{testEndpoint()}},
+		&fakeCollector{dev: &dev, accept: &inventory.Credentials{Username: "root", Password: "0penBmc"}},
+		credsSecret(map[string][]byte{"username": []byte("wrong"), "password": []byte("wrong")}),
+	)
+	w.DefaultCredentials = map[string]inventory.Credentials{
+		"_obmc_redfish._tcp":      {Username: "root", Password: "0penBmc"},
+		inventory.WildcardService: {Username: "admin", Password: "admin"},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = w.Start(ctx) }()
+
+	if !eventually(t, func() bool {
+		var machine bmcv1.Machine
+		return c.Get(ctx, types.NamespacedName{Namespace: "tink", Name: "x570d4i-2t"}, &machine) == nil
+	}) {
+		t.Fatal("machine was not created after pivoting to default credentials")
+	}
+	var secret corev1.Secret
+	if err := c.Get(ctx, types.NamespacedName{Namespace: "tink", Name: "x570d4i-2t-bmc-auth"}, &secret); err != nil {
+		t.Fatal(err)
+	}
+	if string(secret.Data["username"]) != "root" || string(secret.Data["password"]) != "0penBmc" {
+		t.Errorf("auth secret data = %v, want the working root/0penBmc pair", secret.Data)
+	}
+}
+
+func TestWorkerAllCandidatesRejectedCreatesNothing(t *testing.T) {
+	w, c := newWorker(t,
+		&fakeBrowser{endpoints: []mdns.Endpoint{testEndpoint()}},
+		&fakeCollector{accept: &inventory.Credentials{Username: "nobody", Password: "matches"}},
+		credsSecret(map[string][]byte{"username": []byte("wrong"), "password": []byte("wrong")}),
+	)
+	w.DefaultCredentials = map[string]inventory.Credentials{
+		inventory.WildcardService: {Username: "admin", Password: "admin"},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = w.Start(ctx) }()
+
+	time.Sleep(300 * time.Millisecond)
+	var machine bmcv1.Machine
+	if err := c.Get(ctx, types.NamespacedName{Namespace: "tink", Name: "x570d4i-2t"}, &machine); !apierrors.IsNotFound(err) {
+		t.Fatalf("machine should not exist when every credential candidate fails, got err=%v", err)
 	}
 }
 

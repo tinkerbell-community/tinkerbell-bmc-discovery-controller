@@ -10,6 +10,14 @@ func TestParseDefaults(t *testing.T) {
 	if got := defaults["_obmc_console._tcp"]; got != (Credentials{Username: "root", Password: "0penBmc"}) {
 		t.Errorf("console creds = %+v", got)
 	}
+
+	wild, err := ParseDefaults("*=admin:admin")
+	if err != nil {
+		t.Fatalf("wildcard entry: %v", err)
+	}
+	if got := wild[WildcardService]; got != (Credentials{Username: "admin", Password: "admin"}) {
+		t.Errorf("wildcard creds = %+v", got)
+	}
 	// The password may contain colons; only the first splits user from pass.
 	if got := defaults["_redfish._tcp"]; got != (Credentials{Username: "admin", Password: "pa:ss"}) {
 		t.Errorf("redfish creds = %+v", got)

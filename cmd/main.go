@@ -77,7 +77,7 @@ func main() {
 	flag.DurationVar(&resyncInterval, "resync-interval", time.Hour, "Inventory refresh interval for known BMCs.")
 	flag.DurationVar(&collectTimeout, "collect-timeout", 2*time.Minute, "Timeout for one inventory collection.")
 	flag.StringVar(&credentialsSecret, "credentials-secret", "bmc-discovery-credentials", "Name of the Secret holding BMC username/password keys.")
-	flag.StringVar(&defaultCreds, "default-credentials", "_obmc_console._tcp=root:0penBmc", "Per-service-type fallback credentials (<service>=<user>:<pass>, comma-separated) used when the credentials secret does not exist. Empty disables fallbacks.")
+	flag.StringVar(&defaultCreds, "default-credentials", "*=admin:admin,_obmc_console._tcp=root:0penBmc,_obmc_redfish._tcp=root:0penBmc", "Known default credentials (<service>=<user>:<pass>, comma-separated; * is the catch-all) tried after the credentials secret until one authenticates. Empty disables defaults.")
 	flag.IntVar(&redfishPort, "redfish-port", 0, "Redfish port override; 0 uses the mDNS-advertised port. Set (usually to 443) when browsing non-Redfish service types like _obmc_console._tcp.")
 	flag.BoolVar(&insecureTLS, "insecure-tls", true, "Skip BMC TLS verification (BMCs commonly use self-signed certificates).")
 	flag.BoolVar(&leaderElect, "leader-elect", false, "Enable leader election.")

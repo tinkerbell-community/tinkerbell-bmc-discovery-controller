@@ -5,10 +5,15 @@ import (
 	"strings"
 )
 
+// WildcardService is the ParseDefaults key whose credentials apply to any
+// service type without a more specific entry.
+const WildcardService = "*"
+
 // ParseDefaults parses per-service-type fallback credentials from a
 // comma-separated list of "<service>=<username>:<password>" entries, e.g.
-// "_obmc_console._tcp=root:0penBmc". The password may contain colons and
-// equals signs, but not commas.
+// "*=admin:admin,_obmc_console._tcp=root:0penBmc". The service "*" is the
+// wildcard fallback for any service type. The password may contain colons
+// and equals signs, but not commas.
 func ParseDefaults(s string) (map[string]Credentials, error) {
 	defaults := map[string]Credentials{}
 	if s == "" {

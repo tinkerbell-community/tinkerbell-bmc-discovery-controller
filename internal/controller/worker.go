@@ -9,6 +9,7 @@ import (
 	stdsync "sync"
 	"time"
 
+	"github.com/bmc-toolbox/common"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
@@ -29,9 +30,11 @@ type Worker struct {
 	Collector         inventory.Collector
 	Syncer            *syncpkg.Syncer
 	CredentialsSecret types.NamespacedName
-	// DefaultCredentials supplies fallback credentials keyed by DNS-SD
-	// service type, used only when the credentials Secret does not exist
-	// (e.g. OpenBMC's factory root/0penBmc for _obmc_console._tcp).
+	// DefaultCredentials supplies known default credentials keyed by DNS-SD
+	// service type (e.g. OpenBMC's factory root/0penBmc for _obmc_*), with
+	// inventory.WildcardService as the catch-all. They form the candidate
+	// chain after the credentials Secret: the worker pivots through
+	// candidates until one authenticates against the BMC.
 	DefaultCredentials map[string]inventory.Credentials
 	ResyncInterval     time.Duration
 	// RedfishPort, when non-zero, replaces the mDNS-advertised port. Needed
@@ -129,38 +132,84 @@ func (w *Worker) handle(ctx context.Context, key string) error {
 	log := w.Log.With("endpoint", key, "host", ep.IP.String(), "port", ep.Port)
 	log.Debug("handling BMC endpoint")
 
-	creds, err := w.credentials(ctx, ep)
-	if err != nil {
-		return err
+	candidates := w.credentialCandidates(ctx, ep)
+	if len(candidates) == 0 {
+		return fmt.Errorf("no credentials available: secret %s is absent or malformed and no default credentials are configured", w.CredentialsSecret)
 	}
 
 	// Collect doubles as connection verification: resources are only
-	// created for BMCs we can authenticate to and inventory.
-	log.Debug("verifying BMC connection and collecting inventory")
-	dev, err := w.Collector.Collect(ctx, ep, creds)
-	if err != nil {
-		log.Warn("BMC connection could not be verified; deferring resource creation", "err", err)
-		return err
+	// created for BMCs we can authenticate to and inventory. The candidate
+	// chain pivots through known credentials until one authenticates.
+	var dev *common.Device
+	var creds inventory.Credentials
+	var lastErr error
+	for _, candidate := range candidates {
+		log.Debug("verifying BMC connection and collecting inventory",
+			"credentialSource", candidate.source, "username", candidate.creds.Username)
+		d, err := w.Collector.Collect(ctx, ep, candidate.creds)
+		if err != nil {
+			lastErr = err
+			log.Debug("BMC verification failed with candidate credentials",
+				"credentialSource", candidate.source, "err", err)
+			continue
+		}
+		dev, creds = d, candidate.creds
+		log.Info("BMC connection verified",
+			"credentialSource", candidate.source, "vendor", dev.Vendor, "model", dev.Model, "serial", dev.Serial)
+		break
 	}
-	log.Info("BMC connection verified", "vendor", dev.Vendor, "model", dev.Model, "serial", dev.Serial)
+	if dev == nil {
+		log.Warn("BMC connection could not be verified with any candidate credentials; deferring resource creation",
+			"candidatesTried", len(candidates), "err", lastErr)
+		return lastErr
+	}
 
 	return w.Syncer.Sync(ctx, ep, dev, creds)
 }
 
-func (w *Worker) credentials(ctx context.Context, ep mdns.Endpoint) (inventory.Credentials, error) {
-	var secret corev1.Secret
-	if err := w.Client.Get(ctx, w.CredentialsSecret, &secret); err != nil {
-		if creds, ok := w.DefaultCredentials[ep.Service]; ok && apierrors.IsNotFound(err) {
-			w.Log.Debug("credentials secret absent; using service-type default credentials",
-				"secret", w.CredentialsSecret.String(), "service", ep.Service, "username", creds.Username)
-			return creds, nil
+// credentialCandidate pairs credentials with their origin, for logging.
+type credentialCandidate struct {
+	creds  inventory.Credentials
+	source string
+}
+
+// credentialCandidates builds the ordered chain to try against a BMC: the
+// credentials Secret when present and well-formed, then the service-type
+// default, then the wildcard default. Duplicate pairs are collapsed.
+func (w *Worker) credentialCandidates(ctx context.Context, ep mdns.Endpoint) []credentialCandidate {
+	var candidates []credentialCandidate
+	add := func(creds inventory.Credentials, source string) {
+		for _, existing := range candidates {
+			if existing.creds == creds {
+				return
+			}
 		}
-		return inventory.Credentials{}, fmt.Errorf("reading credentials secret %s: %w", w.CredentialsSecret, err)
+		candidates = append(candidates, credentialCandidate{creds: creds, source: source})
 	}
-	w.Log.Debug("using credentials from secret", "secret", w.CredentialsSecret.String())
-	username, password := secret.Data["username"], secret.Data["password"]
-	if len(username) == 0 || len(password) == 0 {
-		return inventory.Credentials{}, fmt.Errorf("credentials secret %s must contain username and password keys", w.CredentialsSecret)
+
+	var secret corev1.Secret
+	switch err := w.Client.Get(ctx, w.CredentialsSecret, &secret); {
+	case err == nil:
+		username, password := secret.Data["username"], secret.Data["password"]
+		if len(username) > 0 && len(password) > 0 {
+			add(inventory.Credentials{Username: string(username), Password: string(password)}, "secret")
+		} else {
+			w.Log.Warn("credentials secret is missing username/password keys; relying on default credentials",
+				"secret", w.CredentialsSecret.String())
+		}
+	case apierrors.IsNotFound(err):
+		w.Log.Debug("credentials secret not found; relying on default credentials",
+			"secret", w.CredentialsSecret.String())
+	default:
+		w.Log.Warn("failed to read credentials secret; relying on default credentials",
+			"secret", w.CredentialsSecret.String(), "err", err)
 	}
-	return inventory.Credentials{Username: string(username), Password: string(password)}, nil
+
+	if creds, ok := w.DefaultCredentials[ep.Service]; ok {
+		add(creds, "service default")
+	}
+	if creds, ok := w.DefaultCredentials[inventory.WildcardService]; ok {
+		add(creds, "global default")
+	}
+	return candidates
 }
