@@ -97,8 +97,10 @@ func TestDesiredHardwareSpec(t *testing.T) {
 		t.Error("Auto.EnrollmentEnabled = false, want true")
 	}
 
-	if len(spec.Interfaces) != 2 {
-		t.Fatalf("Interfaces count = %d, want 2 (deduped, invalid skipped)", len(spec.Interfaces))
+	// Only the primary ethernet interface is recorded, even when the device
+	// reports several — matching hand-provisioned Hardware.
+	if len(spec.Interfaces) != 1 {
+		t.Fatalf("Interfaces count = %d, want 1 (primary only)", len(spec.Interfaces))
 	}
 	first := spec.Interfaces[0]
 	if first.DHCP == nil || first.DHCP.MAC != "aa:bb:cc:dd:ee:01" {
@@ -110,10 +112,6 @@ func TestDesiredHardwareSpec(t *testing.T) {
 	if first.Netboot == nil || first.Netboot.AllowPXE == nil || !*first.Netboot.AllowPXE ||
 		first.Netboot.AllowWorkflow == nil || !*first.Netboot.AllowWorkflow {
 		t.Errorf("Interfaces[0].Netboot = %+v, want allowPXE and allowWorkflow true", first.Netboot)
-	}
-	second := spec.Interfaces[1]
-	if second.DHCP == nil || second.DHCP.MAC != "aa:bb:cc:dd:ee:02" || second.DHCP.Hostname != "" {
-		t.Errorf("Interfaces[1] = %+v, want MAC aa:bb:cc:dd:ee:02 and no hostname", second)
 	}
 
 	if len(spec.Disks) != 1 || spec.Disks[0].Device != "/dev/nvme0n1" {

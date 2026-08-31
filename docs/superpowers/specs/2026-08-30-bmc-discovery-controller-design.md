@@ -104,8 +104,9 @@ renders the resource name from endpoint + verified inventory (variables:
 mac, mac_dashes, hostname, instance, serial, ip; result sanitized).
 Unresolvable endpoints fall back to the default below. Hardware mapping was
 also aligned with the environment's hand-provisioned convention: agentID and
-metadata.instance.id = primary MAC (serial only without MACs),
-netboot-enabled interfaces with the DHCP hostname on the primary,
+metadata.instance.id = primary MAC (serial only without MACs), a single
+netboot-enabled interface for the primary MAC only (2026-08-31: multiple
+reported NICs no longer produce multiple interface entries),
 facility_code and auto enrollment configurable, bmcRef.apiGroup
 `bmc.tinkerbell.org/v1alpha1`, and a gofish Systems/EthernetInterfaces
 fallback fills NIC MACs when bmclib inventory has none.

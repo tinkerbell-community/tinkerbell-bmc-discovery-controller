@@ -90,18 +90,17 @@ func DesiredHardwareSpec(dev *common.Device, opts HardwareOptions) tinkv1.Hardwa
 	if opts.FacilityCode != "" {
 		spec.Metadata.Facility = &tinkv1.MetadataFacility{FacilityCode: opts.FacilityCode}
 	}
-	for i, mac := range inbandMACs(dev) {
-		iface := tinkv1.Interface{
+	// Only the primary ethernet interface is recorded, even when the device
+	// reports several — matching hand-provisioned Hardware, where one
+	// netboot interface identifies the machine.
+	if mac := PrimaryMAC(dev); mac != "" {
+		spec.Interfaces = []tinkv1.Interface{{
 			Netboot: &tinkv1.Netboot{
 				AllowPXE:      ptr.To(true),
 				AllowWorkflow: ptr.To(true),
 			},
-			DHCP: &tinkv1.DHCP{MAC: mac},
-		}
-		if i == 0 {
-			iface.DHCP.Hostname = opts.Name
-		}
-		spec.Interfaces = append(spec.Interfaces, iface)
+			DHCP: &tinkv1.DHCP{MAC: mac, Hostname: opts.Name},
+		}}
 	}
 	for _, drive := range dev.Drives {
 		if drive != nil && drive.LogicalName != "" {

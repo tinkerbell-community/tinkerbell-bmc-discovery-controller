@@ -62,10 +62,10 @@ MACs) falls back to the hostname-derived name with a warning.
 
 Hardware specs follow the conventions of hand-provisioned Tinkerbell
 hardware: `agentID` and `metadata.instance.id` are the primary in-band MAC
-(serial only when no MAC is known), every interface is netboot-enabled
-(`allowPXE`/`allowWorkflow`), the primary interface carries the DHCP
-hostname, and `metadata.facility.facility_code` and auto enrollment are
-configurable. When bmclib's inventory yields no host NICs the collector
+(serial only when no MAC is known), only the primary ethernet interface is
+recorded — netboot-enabled (`allowPXE`/`allowWorkflow`) and carrying the
+DHCP hostname — and `metadata.facility.facility_code` and auto enrollment
+are configurable. When bmclib's inventory yields no host NICs the collector
 additionally queries Redfish `Systems/EthernetInterfaces` directly for MACs.
 
 ### Discovering BMCs that only advertise a console service
