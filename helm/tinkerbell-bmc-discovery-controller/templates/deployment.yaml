@@ -11,6 +11,7 @@ spec:
   # other node can host the new pod; recreate the single replica instead.
   strategy:
     type: Recreate
+    rollingUpdate: null
   selector:
     matchLabels:
       {{- include "bmc-discovery.selectorLabels" . | nindent 6 }}
