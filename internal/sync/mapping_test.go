@@ -1,12 +1,16 @@
 package sync
 
 import (
+	"encoding/json"
 	"net/netip"
+	"strings"
 	"testing"
 
 	"github.com/bmc-toolbox/common"
 	bmcv1 "github.com/tinkerbell/tinkerbell/api/v1alpha1/bmc"
+	tinkv1 "github.com/tinkerbell/tinkerbell/api/v1alpha1/tinkerbell"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/utils/ptr"
 
 	"github.com/tinkerbell-community/tinkerbell-bmc-discovery-controller/internal/mdns"
 )
@@ -43,10 +47,26 @@ func testDevice() *common.Device {
 	return &dev
 }
 
-func TestDesiredMachineSpec(t *testing.T) {
-	authRef := corev1.SecretReference{Name: "x570d4i-2t-bmc-auth", Namespace: "tink"}
-	spec := DesiredMachineSpec(testEndpoint(), true, authRef)
+func testHardwareOptions() HardwareOptions {
+	return HardwareOptions{
+		Name:           "talos-aabbccddee01",
+		Namespace:      "tink",
+		FacilityCode:   "onprem",
+		AutoEnrollment: true,
+	}
+}
 
+func TestDesiredMachine(t *testing.T) {
+	authRef := corev1.SecretReference{Name: "x570d4i-2t-bmc-auth", Namespace: "tink"}
+	machine := DesiredMachine(testEndpoint(), "x570d4i-2t", "tink", true, authRef)
+
+	if machine.APIVersion != "bmc.tinkerbell.org/v1alpha1" || machine.Kind != "Machine" {
+		t.Errorf("TypeMeta = %s/%s, want bmc.tinkerbell.org/v1alpha1 Machine", machine.APIVersion, machine.Kind)
+	}
+	if machine.Name != "x570d4i-2t" || machine.Namespace != "tink" {
+		t.Errorf("ObjectMeta = %s/%s", machine.Namespace, machine.Name)
+	}
+	spec := machine.Spec
 	if spec.Connection.Host != "10.0.80.1" {
 		t.Errorf("Host = %q, want 10.0.80.1", spec.Connection.Host)
 	}
@@ -81,12 +101,16 @@ func TestPrimaryMAC(t *testing.T) {
 	}
 }
 
-func TestDesiredHardwareSpec(t *testing.T) {
-	spec := DesiredHardwareSpec(testDevice(), HardwareOptions{
-		Name:           "talos-aabbccddee01",
-		FacilityCode:   "onprem",
-		AutoEnrollment: true,
-	})
+func TestDesiredHardware(t *testing.T) {
+	hw := DesiredHardware(testDevice(), testHardwareOptions(), nil)
+
+	if hw.APIVersion != "tinkerbell.org/v1alpha1" || hw.Kind != "Hardware" {
+		t.Errorf("TypeMeta = %s/%s, want tinkerbell.org/v1alpha1 Hardware", hw.APIVersion, hw.Kind)
+	}
+	if hw.Name != "talos-aabbccddee01" || hw.Namespace != "tink" {
+		t.Errorf("ObjectMeta = %s/%s", hw.Namespace, hw.Name)
+	}
+	spec := hw.Spec
 
 	// agentID and metadata.instance.id are the primary in-band MAC, matching
 	// the convention of hand-provisioned Hardware in this environment.
@@ -111,7 +135,7 @@ func TestDesiredHardwareSpec(t *testing.T) {
 	}
 	if first.Netboot == nil || first.Netboot.AllowPXE == nil || !*first.Netboot.AllowPXE ||
 		first.Netboot.AllowWorkflow == nil || !*first.Netboot.AllowWorkflow {
-		t.Errorf("Interfaces[0].Netboot = %+v, want allowPXE and allowWorkflow true", first.Netboot)
+		t.Errorf("Interfaces[0].Netboot = %+v, want allowPXE and allowWorkflow true on create", first.Netboot)
 	}
 
 	if len(spec.Disks) != 1 || spec.Disks[0].Device != "/dev/nvme0n1" {
@@ -135,18 +159,85 @@ func TestDesiredHardwareSpec(t *testing.T) {
 	}
 }
 
-func TestDesiredHardwareSpecNoMACFallsBackToSerial(t *testing.T) {
+func TestDesiredHardwareNoMACFallsBackToSerial(t *testing.T) {
 	dev := common.NewDevice()
 	dev.Serial = "SN99"
-	spec := DesiredHardwareSpec(&dev, HardwareOptions{Name: "x570d4i2t"})
+	hw := DesiredHardware(&dev, HardwareOptions{Name: "x570d4i2t", Namespace: "tink"}, nil)
 
-	if spec.AgentID != "" {
-		t.Errorf("AgentID = %q, want empty without MACs", spec.AgentID)
+	if hw.Spec.AgentID != "" {
+		t.Errorf("AgentID = %q, want empty without MACs", hw.Spec.AgentID)
 	}
-	if spec.Metadata == nil || spec.Metadata.Instance == nil || spec.Metadata.Instance.ID != "SN99" {
-		t.Errorf("Instance = %+v, want ID SN99 (serial fallback)", spec.Metadata)
+	if hw.Spec.Metadata == nil || hw.Spec.Metadata.Instance == nil || hw.Spec.Metadata.Instance.ID != "SN99" {
+		t.Errorf("Instance = %+v, want ID SN99 (serial fallback)", hw.Spec.Metadata)
 	}
-	if spec.Metadata.Facility != nil {
-		t.Errorf("Facility = %+v, want nil when no facility code configured", spec.Metadata.Facility)
+	if hw.Spec.Metadata.Facility != nil {
+		t.Errorf("Facility = %+v, want nil when no facility code configured", hw.Spec.Metadata.Facility)
+	}
+	if len(hw.Spec.Interfaces) != 0 {
+		t.Errorf("Interfaces = %+v, want none without a MAC", hw.Spec.Interfaces)
+	}
+}
+
+// TestDesiredHardwareSparse locks in the safety property of the migration:
+// the marshaled apply payload must never contain fields owned by other
+// controllers (CAPT's userData, talos-os-metadata's operating_system and
+// state, and the rest of the forbidden set from
+// docs/discovery-field-ownership.md).
+func TestDesiredHardwareSparse(t *testing.T) {
+	live := &tinkv1.Hardware{Spec: tinkv1.HardwareSpec{
+		UserData: ptr.To("#cloud-config foreign"),
+		Interfaces: []tinkv1.Interface{{
+			Netboot: &tinkv1.Netboot{AllowPXE: ptr.To(false), AllowWorkflow: ptr.To(true)},
+		}},
+		Metadata: &tinkv1.HardwareMetadata{Instance: &tinkv1.MetadataInstance{
+			State:           "provisioned",
+			OperatingSystem: &tinkv1.MetadataInstanceOperatingSystem{Slug: "abc123"},
+		}},
+	}}
+	for name, l := range map[string]*tinkv1.Hardware{"create": nil, "update": live} {
+		applyConfig, err := applyConfigurationFor(DesiredHardware(testDevice(), testHardwareOptions(), l))
+		if err != nil {
+			t.Fatal(err)
+		}
+		payload, err := json.Marshal(applyConfig.Object)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, forbidden := range []string{
+			`"userData"`, `"vendorData"`, `"operating_system"`, `"state"`,
+			`"references"`, `"resources"`, `"tinkVersion"`,
+			`"status"`, `"creationTimestamp"`,
+		} {
+			if strings.Contains(string(payload), forbidden) {
+				t.Errorf("%s payload contains forbidden field %s:\n%s", name, forbidden, payload)
+			}
+		}
+	}
+}
+
+// TestNetbootCarryForward verifies the create-only authorship rule:
+// defaults on create, the live values — including an explicit false —
+// reproduced verbatim on update.
+func TestNetbootCarryForward(t *testing.T) {
+	if nb := netbootFor(nil); nb.AllowPXE == nil || !*nb.AllowPXE || nb.AllowWorkflow == nil || !*nb.AllowWorkflow {
+		t.Errorf("netbootFor(nil) = %+v, want create defaults true/true", nb)
+	}
+
+	live := &tinkv1.Hardware{Spec: tinkv1.HardwareSpec{
+		Interfaces: []tinkv1.Interface{{
+			Netboot: &tinkv1.Netboot{AllowPXE: ptr.To(false), AllowWorkflow: ptr.To(true)},
+		}},
+	}}
+	nb := netbootFor(live)
+	if nb.AllowPXE == nil || *nb.AllowPXE || nb.AllowWorkflow == nil || !*nb.AllowWorkflow {
+		t.Errorf("netbootFor(live) = %+v, want allowPXE false carried forward", nb)
+	}
+	if nb == live.Spec.Interfaces[0].Netboot {
+		t.Error("netbootFor must deep-copy, not alias, the live netboot")
+	}
+
+	noNetboot := &tinkv1.Hardware{Spec: tinkv1.HardwareSpec{Interfaces: []tinkv1.Interface{{}}}}
+	if nb := netbootFor(noNetboot); nb.AllowPXE == nil || !*nb.AllowPXE {
+		t.Errorf("netbootFor(no netboot) = %+v, want create defaults", nb)
 	}
 }

@@ -17,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -203,5 +204,85 @@ func TestSyncUpdatesExistingManaged(t *testing.T) {
 	}
 	if machine.Annotations[LastSeenAnnotation] != "2026-08-30T13:00:00Z" {
 		t.Errorf("last-seen = %q", machine.Annotations[LastSeenAnnotation])
+	}
+}
+
+func TestSyncCarriesNetbootForward(t *testing.T) {
+	// The tink workflow controller disarms PXE after a workflow completes;
+	// discovery's resync must reproduce that value verbatim, never re-arm it
+	// (create-only netboot authorship, docs/discovery-field-ownership.md).
+	s, c := newTestSyncer(t)
+	ctx := context.Background()
+
+	if err := s.Sync(ctx, testEndpoint(), testDevice(), testCreds); err != nil {
+		t.Fatal(err)
+	}
+
+	var hw tinkv1.Hardware
+	key := types.NamespacedName{Namespace: "tink", Name: "x570d4i-2t"}
+	if err := c.Get(ctx, key, &hw); err != nil {
+		t.Fatal(err)
+	}
+	if nb := hw.Spec.Interfaces[0].Netboot; nb.AllowPXE == nil || !*nb.AllowPXE {
+		t.Fatalf("create should author allowPXE=true, got %+v", nb)
+	}
+
+	// Simulate the tink workflow controller's post-workflow disarm.
+	hw.Spec.Interfaces[0].Netboot.AllowPXE = ptr.To(false)
+	if err := c.Update(ctx, &hw); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.Sync(ctx, testEndpoint(), testDevice(), testCreds); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(ctx, key, &hw); err != nil {
+		t.Fatal(err)
+	}
+	if nb := hw.Spec.Interfaces[0].Netboot; nb == nil || nb.AllowPXE == nil || *nb.AllowPXE {
+		t.Errorf("resync re-armed PXE: netboot = %+v, want allowPXE false carried forward", nb)
+	}
+}
+
+func TestSyncPreservesForeignHardwareFields(t *testing.T) {
+	// CAPT writes spec.userData (the machine's Talos config source) and
+	// talos-os-metadata writes spec.metadata.instance.operating_system;
+	// discovery's sparse apply must leave both untouched. The authoritative
+	// ownership check runs against a real API server (envtest, M3); this
+	// locks in the behavior under the fake client's SSA emulation.
+	s, c := newTestSyncer(t)
+	ctx := context.Background()
+
+	if err := s.Sync(ctx, testEndpoint(), testDevice(), testCreds); err != nil {
+		t.Fatal(err)
+	}
+
+	var hw tinkv1.Hardware
+	key := types.NamespacedName{Namespace: "tink", Name: "x570d4i-2t"}
+	if err := c.Get(ctx, key, &hw); err != nil {
+		t.Fatal(err)
+	}
+	hw.Spec.UserData = ptr.To("#cloud-config foreign")
+	hw.Spec.Metadata.Instance.OperatingSystem = &tinkv1.MetadataInstanceOperatingSystem{Slug: "abc123"}
+	hw.Spec.Metadata.Instance.State = "provisioned"
+	if err := c.Update(ctx, &hw); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.Sync(ctx, testEndpoint(), testDevice(), testCreds); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(ctx, key, &hw); err != nil {
+		t.Fatal(err)
+	}
+	if hw.Spec.UserData == nil || *hw.Spec.UserData != "#cloud-config foreign" {
+		t.Errorf("resync wiped spec.userData: %v", hw.Spec.UserData)
+	}
+	inst := hw.Spec.Metadata.Instance
+	if inst == nil || inst.OperatingSystem == nil || inst.OperatingSystem.Slug != "abc123" {
+		t.Errorf("resync wiped operating_system: %+v", inst)
+	}
+	if inst != nil && inst.State != "provisioned" {
+		t.Errorf("resync wiped instance state: %q", inst.State)
 	}
 }

@@ -9,6 +9,15 @@ build:
 test:
 	CGO_ENABLED=1 go test -race -coverprofile=cover.out ./...
 
+# Field-ownership tests against a real API server (envtest). Managed-fields
+# semantics are asserted here, not with the fake client — see
+# docs/discovery-field-ownership.md.
+ENVTEST_K8S_VERSION ?= 1.37.0
+.PHONY: test-envtest
+test-envtest:
+	KUBEBUILDER_ASSETS="$$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.24 use $(ENVTEST_K8S_VERSION) -p path)" \
+		CGO_ENABLED=1 go test -race -tags envtest -run 'TestEnvtest' ./internal/sync/...
+
 .PHONY: vet
 vet:
 	go vet ./...
