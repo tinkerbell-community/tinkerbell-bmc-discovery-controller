@@ -17,6 +17,21 @@ builds:
     ldflags:
       - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}} -X main.builtBy=goreleaser
       - -extldflags '-static'
+  # Each lifecycle-glue component is its own binary + image (repo naming
+  # standard); all builds share the Dockerfile by naming the binary
+  # "manager" — the per-image `ids` filter keeps contexts separate.
+  - id: talos-machine-teardown
+    env: ["CGO_ENABLED=0"]
+    main: ./cmd/talos-machine-teardown
+    binary: manager
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}} -X main.builtBy=goreleaser
+      - -extldflags '-static'
 
 checksum:
   name_template: "{{ .ArtifactName }}-checksums.txt"
@@ -33,6 +48,7 @@ changelog:
 
 dockers_v2:
   - id: manager
+    ids: ["manager"]
     dockerfile: Dockerfile
     extra_files:
       - LICENSE
@@ -47,6 +63,23 @@ dockers_v2:
     labels:
       "org.opencontainers.image.created": "{{.Date}}"
       "org.opencontainers.image.name": "{{.ProjectName}}"
+      "org.opencontainers.image.revision": "{{.FullCommit}}"
+      "org.opencontainers.image.version": "{{.Version}}"
+      "org.opencontainers.image.source": "{{.GitURL}}"
+  - id: talos-machine-teardown
+    ids: ["talos-machine-teardown"]
+    dockerfile: Dockerfile
+    extra_files:
+      - LICENSE
+    images:
+      - "{{ .Env.REGISTRY }}/tinkerbell-community/talos-machine-teardown"
+    tags:
+      - '{{ if eq .Env.IS_RELEASE "true" }}{{ .Version }}{{ end }}'
+      - "{{ if not .IsNightly }}latest{{ end }}"
+      - '{{ if eq .Branch "main" }}sha-{{ .ShortCommit }}{{ end }}'
+    labels:
+      "org.opencontainers.image.created": "{{.Date}}"
+      "org.opencontainers.image.name": "talos-machine-teardown"
       "org.opencontainers.image.revision": "{{.FullCommit}}"
       "org.opencontainers.image.version": "{{.Version}}"
       "org.opencontainers.image.source": "{{.GitURL}}"

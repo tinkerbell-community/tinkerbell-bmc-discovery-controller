@@ -1,0 +1,9 @@
+apiVersion: v2
+name: talos-machine-teardown
+description: CAPI pre-terminate machine deletion hook for Talos on Tinkerbell - etcd membership removal and Talos reset (wipe STATE+EPHEMERAL, halt) before the hardware is powered off.
+type: application
+version: 0.1.0
+appVersion: "0.1.12"
+home: https://github.com/tinkerbell-community/tinkerbell-bmc-discovery-controller
+sources:
+  - https://github.com/tinkerbell-community/tinkerbell-bmc-discovery-controller

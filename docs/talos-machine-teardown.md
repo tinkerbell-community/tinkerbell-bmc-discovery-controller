@@ -56,8 +56,8 @@ design below). See docs/architecture.md for the governing facts, ownership matri
 
 | Object | Field | Mechanism / field manager |
 | --- | --- | --- |
-| `Machine` | annotations listed below | cluster-api `patch.Helper` (optimistic-concurrency merge patch), field owner `talos-machine-teardown` |
-| Secret `talosconfig-<cluster-ns>-<cluster>` (C3's own namespace) | whole object (cached talosconfig) | SSA, field manager `talos-machine-teardown` |
+| `Machine` | annotations listed below | cluster-api `patch.Helper` (two-way merge patch; disjoint keys cannot clobber sibling annotations), field owner `talos-machine-teardown` |
+| Secret `talosconfig-<cluster-ns>-<cluster>` (C3's own namespace) | whole object (cached talosconfig) | Create/Update, field owner `talos-machine-teardown` (fully owned object; SSA adds nothing here) |
 | Events on `Machine` | reasons listed below | event recorder `talos-machine-teardown` |
 
 Annotation writes on Machines deliberately use the CAPI patch helper, not SSA: annotation-level merge
@@ -332,6 +332,17 @@ CACPPT's exact access pattern (controllers/configs.go:71-84).
 - **Annotation-key disjointness**: `pre-terminate.../talos-teardown`, `etcd-leaving`,
   `update-in-progress`, and `teardown.tinkerbell.org/*` are disjoint keys written via merge patches;
   no writer can clobber another (confirmed by the overlap critique).
+- **No post-release re-stamp** (as implemented): after release, the Machine's `Deleting` condition can
+  still read `WaitingForPreTerminateHook` until the machine controller's next pass; the late-stamp path
+  therefore refuses to re-stamp whenever the reset conclusion annotation is present, breaking the
+  stamp → short-circuit → release → watch-event loop.
+- **Small deviations recorded** (as implemented, each safe): the Hardware lookup falls back to the
+  TinkerbellMachine's own namespace when `status.targetNamespace` is empty; a machine whose etcd phase
+  already concluded skips the CP serialization hold (the one-etcd-op-per-cluster invariant still
+  holds); a reachable victim whose etcd is already `Finished` goes straight to removal-via-peer rather
+  than attempting a doomed leave; the run-last check ignores pre-terminate keys carrying this
+  controller's own value (pre-rename leftovers, swept in the release patch); per-RPC timeouts are
+  genuinely per RPC (fresh context per call).
 
 ### Sequence diagram — CP machine delete, end to end
 
@@ -415,12 +426,22 @@ rules:
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["create", "patch"]
+  - apiGroups: ["events.k8s.io"]
+    resources: ["events"]
+    verbs: ["create", "patch"]
 ```
 
-Role in C3's own namespace: `secrets` `create/get/update/delete` (credentials cache);
-`coordination.k8s.io` `leases` `get/create/update` (leader election). The cluster-wide `secrets get` is
-the widest grant; the chart exposes `watchNamespace` to scope the whole ClusterRole down to a single
-CAPI namespace (the deployed environment keeps everything in `tinkerbell`).
+The `events.k8s.io` rule exists because the controller uses the structured events recorder
+(`manager.GetEventRecorder`), whose sink creates `events.k8s.io/v1` Events; the core-group grant covers
+legacy consumers. Secrets and Hardware are read with `get`/`list` only — no `watch` — and the manager
+client deliberately bypasses the cache for both types (`client.CacheOptions.DisableFor`): a cached
+Secret informer would need `watch` and would hold every cluster secret in memory.
+
+Role in C3's own namespace: `secrets` `get/list/watch/create/update/delete` (credentials cache + GC);
+`coordination.k8s.io` `leases` `get/list/watch/create/update/patch/delete` (leader election); events in
+both groups. The cluster-wide `secrets get` is the widest grant; the chart exposes `watchNamespace` to
+scope the whole ClusterRole down to a single CAPI namespace (the deployed environment keeps everything
+in `tinkerbell`).
 
 ## Deployment
 
@@ -440,6 +461,7 @@ Flags ↔ values (kebab ↔ camelCase):
 | `--etcd-call-timeout` | `10s` | per Talos etcd RPC |
 | `--reset-call-timeout` | `30s` | per `ResetGeneric` RPC |
 | `--watch-namespace` | `""` (all) | restrict cache + RBAC scope |
+| `--cache-namespace` | `POD_NAMESPACE` | namespace holding the cached talosconfig secrets (the controller's own) |
 | `--concurrency` | `4` | max concurrent reconciles (CP etcd work is serialized per cluster logically) |
 | `--leader-elect`, `--metrics-bind-address`, `--health-probe-bind-address`, `--log-level`, `--log-format` | repo defaults | as in the discovery controller |
 
@@ -500,8 +522,15 @@ already carry the hook; `Watches(&clusterv1.Cluster{})` mapped to that cluster's
 `Watches(&tinkv1beta2.TinkerbellMachine{})` mapped to the owner Machine (addresses appearing late).
 Peer listing uses cache-backed label-selector lists on `cluster.x-k8s.io/cluster-name` +
 `cluster.x-k8s.io/control-plane`; no field indexes needed. Scheme: clientgoscheme + cluster-api core
-v1beta2 + CAPT `api` module (standalone, importable without the controller) + tinkerbell api. Pins:
-`sigs.k8s.io/cluster-api` v1.13.0 and `siderolabs/talos/pkg/machinery` v1.13.0 to match the forks (F7).
+v1beta2 + tinkerbell api. Pins: `sigs.k8s.io/cluster-api` v1.13.0 and
+`siderolabs/talos/pkg/machinery` v1.13.0 to match the forks (F7).
+
+> **Decision (as implemented) — TinkerbellMachine is read as unstructured.** Only three fields are
+> needed (`status.addresses`, `status.targetNamespace`, `spec.hardwareName`), and importing the CAPT
+> fork's `api` module would force a `replace` directive on every consumer of this module (the fork's
+> v1beta2 types are not published under the upstream module path) — the same trade-off
+> talos-upgrade-coordinator records for `TalosControlPlane`. The unstructured watch is mapped to the
+> owner Machine via owner references.
 
 Milestones:
 
@@ -513,15 +542,19 @@ Milestones:
   etcd-leaving-hint present with failed prior leave).
 - **M3**: cluster-delete mode + credential cache/GC + deadline paths (`orphaned`,
   `skipped-timeout`, `skipped-no-address`) with a fake clock.
-- **M4**: run-last discipline, metrics (`teardown_machines_total{outcome}`,
-  `teardown_etcd_total{outcome}`, `teardown_reset_duration_seconds`), chart + goreleaser entries,
+- **M4**: run-last discipline, metrics (`teardown_machines_total`,
+  `teardown_etcd_total{outcome}`, `teardown_reset_total{outcome}`, `teardown_reset_duration_seconds`),
+  chart + goreleaser entries,
   hardware validation on the fleet (halt semantics, timings), docs.
 
-Test strategy: unit tests for pure functions (matching, qualification, phase detection); envtest with
-the CAPI, CAPT-api, and tinkerbell CRDs, writing Machine `status.conditions` directly to simulate the
-machine controller's phases; the fake `Client` behind `ClientFactory` asserts exact call sequences
-(e.g. no `EtcdForfeitLeadership` when the hint is present, no etcd calls in cluster-delete mode);
-idempotency tests replay each reconcile twice and after simulated crashes between patches.
+Test strategy: unit tests for pure functions (matching, qualification, phase detection); scenario
+tests against the controller-runtime fake client, writing Machine `status.conditions` directly to
+simulate the machine controller's phases; the fake `Client` behind `ClientFactory` scripts a node
+fleet and asserts exact call sequences (e.g. no `EtcdForfeitLeadership` when the hint is present, no
+etcd calls in cluster-delete mode); idempotency tests replay reconciles after phase conclusions and
+verify no Talos re-dials. (As implemented: the fake client suffices here — unlike C0, C3's Machine
+writes are annotation merge patches with no SSA field-ownership semantics to distrust; envtest with
+the CAPI CRDs remains an option for the M4 hardware-validation milestone.)
 
 ## Non-goals
 

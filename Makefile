@@ -38,4 +38,4 @@ snapshot:
 
 .PHONY: helm-lint
 helm-lint:
-	helm lint helm/tinkerbell-bmc-discovery-controller
+	@for chart in helm/*/; do helm lint "$$chart" || exit 1; done

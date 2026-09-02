@@ -1,0 +1,49 @@
+image:
+  repository: ghcr.io/tinkerbell-community/talos-machine-teardown
+  # Defaults to the chart appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+teardown:
+  # Namespace to watch for CAPI Machines/Clusters. Empty watches all
+  # namespaces (RBAC becomes cluster-scoped); setting it scopes both the
+  # cache and the RBAC grants to that one namespace.
+  watchNamespace: ""
+  # etcd phase deadline, measured from the pre-terminate-observed-at
+  # annotation. On expiry the member is left for CACPPT's auditEtcd
+  # (fail open).
+  etcdTimeout: 2m
+  # Reset phase deadline (includes the etcd phase). On expiry the machine
+  # proceeds to power-off with a dirty disk; the next provisioning
+  # re-images it (fail open).
+  resetTimeout: 5m
+  # Per-RPC timeouts against Talos nodes.
+  etcdCallTimeout: 10s
+  resetCallTimeout: 30s
+  # Maximum concurrent reconciles; etcd operations are serialized per
+  # cluster regardless.
+  concurrency: 4
+
+leaderElection: true
+
+logging:
+  level: info
+  format: json
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 64Mi
+  limits:
+    memory: 128Mi
+
+# NOTE: this controller's namespace holds GC-proof copies of each cluster's
+# talosconfig (cluster-admin Talos credentials) so teardown still works
+# during whole-cluster deletion. Treat the namespace with the same
+# sensitivity as the CAPI cluster namespace.
+#
+# Operator escape hatch: if the controller is down while an annotated
+# Machine deletes, the deletion parks at pre-terminate. Release it manually
+# with:
+#   kubectl annotate machine <name> \
+#     pre-terminate.delete.hook.machine.cluster.x-k8s.io/talos-teardown-
